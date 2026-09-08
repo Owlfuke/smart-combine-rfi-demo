@@ -44,8 +44,8 @@ export function installRfi({engine,getProject,mutate,schedule,toast}){
  await commitCloud(r);},true);
  async function commitCloud(r,target=null){const p=getProject();
  try{engine.draw();const pad=12,x=Math.max(0,r.x-pad),y=Math.max(0,r.y-pad),w=Math.min(engine.width,r.x+r.w+pad)-x,h=Math.min(engine.height,r.y+r.h+pad)-y;const rendered=renderRfiCrop(engine,{x,y,w,h}),crop=rendered.canvas,d=rendered.scale;const ctx=crop.getContext('2d');ctx.scale(d,d);cloud(ctx,{x:r.x-x,y:r.y-y,w:r.w,h:r.h});const l=p.layers.find(l=>l.id===p.selectedId);const world=engine.world(r);const item={id:crypto.randomUUID(),createdAt:Date.now(),sheetId:l?.id,sheetName:l?.name||'',references:rfiReferences(p,engine.comparisonMode),gridLine:'',gridImageWarning:'',question:'',image:crop.toDataURL('image/png'),rect:{...world,w:r.w/p.camera.zoom,h:r.h/p.camera.zoom}};const gridLayer=p.layers.find(v=>v.id===p.baseId&&v.gridBands?.top&&v.gridBands?.side)||(l?.gridBands?.top&&l?.gridBands?.side?l:(p.layers.filter(v=>v.gridBands?.top&&v.gridBands?.side).length===1?p.layers.find(v=>v.gridBands?.top&&v.gridBands?.side):null));if(gridLayer){try{const framed=frameWithGrid(crop,gridLayer,engine.cache.get(gridLayer.assetId)?.source,{...engine.world({x,y}),w:w/p.camera.zoom,h:h/p.camera.zoom});item.image=framed.toDataURL('image/png');item.gridImageSource=gridLayer.name;toast("กำลังอ่านชื่อหัวกริดเฉพาะช่วง Cloud…");try{item.gridLine=await readGridFrame(framed)||"";if(!item.gridLine)item.gridImageWarning="แนบภาพกริดแล้ว แต่อ่านชื่อกริดไม่ครบ กรุณาตรวจชื่อจากภาพ";}catch{item.gridImageWarning="แนบภาพกริดแล้ว แต่ OCR ไม่สำเร็จ กรุณาตรวจชื่อจากภาพ";}}catch(e){item.gridImageWarning="สร้าง Cloud แล้ว แต่ยังไม่แนบแถบกริด: "+e.message;}}if(target){Object.assign(item,{id:target.id,createdAt:target.createdAt,question:target.question});}const reference=p.layers.find(l=>l.id===p.baseId&&l.gridLines?.length)||l;
-const suggested=reference?.gridLines?.length?gridBounds(reference,item.rect):null;
-if(suggested){item.gridLine=suggested;item.gridSource=reference.name;}else if(reference?.gridLines?.length){item.gridLine='';item.gridSource=reference.name;toast('กริดไม่คร่อม Cloud หรือแนวเส้นไม่ขนาน กรุณาตรวจขอบเขตกริด',true);}
+const suggested=!gridLayer&&reference?.gridLines?.length?gridBounds(reference,item.rect):null;
+if(suggested){item.gridLine=suggested;item.gridSource=reference.name;}else if(!gridLayer&&reference?.gridLines?.length){item.gridLine='';item.gridSource=reference.name;toast('กริดไม่คร่อม Cloud หรือแนวเส้นไม่ขนาน กรุณาตรวจขอบเขตกริด',true);}
 if(getProject()!==p)return;await mutate(target?'ปรับขนาดเมฆแล้ว':'',()=>{if(target)Object.assign(target,item);else (p.rfis??=[]).push(item);});refresh();$('rfi-list').value=item.id;show(item);}catch(e){toast(e.message,true);}}
 
  canvas.addEventListener('wheel',e=>{if(drag){e.preventDefault();e.stopImmediatePropagation();}},{capture:true,passive:false});
@@ -62,8 +62,15 @@ export async function exportRfi(item){
  function line(text){if(y>1900){flush();pdf.addPage();page();}ctx.fillText(text,0,y);y+=38;}
  function paragraph(text){for(const raw of text.split('\n')){let row='';for(const ch of raw){if(ctx.measureText(row+ch).width>width-20){line(row);row='';}row+=ch;}line(row);}}
  page();paragraph('วันที่: '+new Date().toLocaleDateString('th-TH'));paragraph('แผ่นแบบอ้างอิง / Layer:');
- for(const ref of item.references||[{name:item.sheetName,color:null}]){if(y>1820){flush();pdf.addPage();page();}ctx.fillStyle=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';ctx.fillRect(0,y-22,22,22);ctx.fillStyle='#111827';paragraph('     '+ref.name+(ref.color?'':' (สีต้นฉบับ / ไม่ระบุสี)'));}
+ for(const ref of item.references||[{name:item.sheetName,color:null}]){if(y>1820){flush();pdf.addPage();page();}ctx.fillStyle=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';ctx.fillRect(0,y-22,22,22);ctx.fillStyle='#111827';paragraph('     '+ref.name);}
  if(!item.references)paragraph('รายการเดิม: ไม่มีข้อมูล Layer ทั้งหมด ณ เวลาครอป');
  const img=new Image();img.src=item.image;await img.decode();const ratio=Math.min(width/img.width,720/img.height);const iw=img.width*ratio,ih=img.height*ratio;if(y+ih+65>1850){flush();pdf.addPage();page();}ctx.drawImage(img,(width-iw)/2,y+10,iw,ih);y+=ih+65;paragraph('ขอบเขต Grid line: '+item.gridLine.trim());if(item.gridSource)paragraph('อ้างอิงกริด: '+item.gridSource);paragraph('คำถาม / รายละเอียด:');paragraph(item.question||'—');
- if(y>1750){flush();pdf.addPage();page();}y=Math.max(y+80,1790);paragraph('ผู้อนุมัติ: ____________________________________');paragraph('วันที่อนุมัติ: _________________________________');flush();pdf.save('RFI-'+new Date(item.createdAt).toISOString().replace(/[:.]/g,'-')+'.pdf');
+ // Reserve a writable response area and anchor approval fields at the page foot.
+ if(y>1650){flush();pdf.addPage();page();}
+ const divider=Math.max(y+28,1560);
+ ctx.save();ctx.strokeStyle='#2563eb';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,divider);ctx.lineTo(width,divider);ctx.stroke();
+ ctx.fillStyle='#2563eb';ctx.font='bold 28px Tahoma, sans-serif';ctx.fillText('คำตอบ',0,divider+48);ctx.restore();
+ ctx.fillText('ผู้อนุมัติ: ____________________________________',0,2050);
+ ctx.fillText('วันที่อนุมัติ: _________________________________',0,2090);
+ flush();pdf.save('RFI-'+new Date(item.createdAt).toISOString().replace(/[:.]/g,'-')+'.pdf');
 }

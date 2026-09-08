@@ -11,6 +11,9 @@ export function frameWithGrid(crop,layer,source,world){
  const out=document.createElement('canvas');out.width=lw+gap+cw;out.height=lh+gap+ch;const c=out.getContext('2d');c.fillStyle='white';c.fillRect(0,0,out.width,out.height);
  const strip=(x,y,w,h,band)=>{const s=document.createElement('canvas'),factor=Math.min(3,2200/Math.max(w,h));s.width=Math.max(1,Math.ceil(w*factor));s.height=Math.max(1,Math.ceil(h*factor));const ctx=s.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,s.width,s.height);const a=Math.max(x,band.x,0),b=Math.max(y,band.y,0),right=Math.min(x+w,band.x+band.w,source.width),bottom=Math.min(y+h,band.y+band.h,source.height);if(right>a&&bottom>b)ctx.drawImage(source,a,b,right-a,bottom-b,(a-x)*s.width/w,(b-y)*s.height/h,(right-a)*s.width/w,(bottom-b)*s.height/h);return s;};
  out.topStrip=strip(sx,top.y,sw,top.h,top);out.sideStrip=strip(left.x,sy,left.w,sh,left);
+ // OCR uses uncropped heads at source resolution; display size never sets OCR resolution.
+ const ocrBand=(band,lo,hi,axis)=>{const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.ceil(band.w));canvas.height=Math.max(1,Math.ceil(band.h));const ctx=canvas.getContext('2d');ctx.fillStyle='white';ctx.fillRect(0,0,canvas.width,canvas.height);ctx.drawImage(source,band.x,band.y,band.w,band.h,0,0,canvas.width,canvas.height);return {canvas,lo:(lo-band[axis])*(axis==='x'?canvas.width/band.w:canvas.height/band.h),hi:(hi-band[axis])*(axis==='x'?canvas.width/band.w:canvas.height/band.h)};};
+ out.ocrTop=ocrBand(bands.top,sx,sx+sw,'x');out.ocrSide=ocrBand(bands.side,sy,sy+sh,'y');
  c.drawImage(out.topStrip,lw+gap,0,cw,lh);c.drawImage(out.sideStrip,0,lh+gap,lw,ch);
  c.save();c.beginPath();c.rect(lw+gap,lh+gap,cw,ch);c.clip();
  const origin=map(inv,{x:world.x,y:world.y}),px=world.w/crop.width,py=world.h/crop.height;

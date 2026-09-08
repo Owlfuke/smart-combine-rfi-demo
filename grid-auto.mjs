@@ -34,12 +34,12 @@ export function findGridHeads(canvas){
 export async function readHead(canvas,box,worker,top){
  const c=document.createElement('canvas');c.width=c.height=128;const x=c.getContext('2d');x.fillStyle='white';x.fillRect(0,0,128,128);
  // Mask the outline while keeping suffixes near the sides of the head.
- x.save();x.beginPath();x.ellipse(64,64,43,43,0,0,Math.PI*2);x.clip();x.drawImage(canvas,box.x,box.y,box.w,box.h,16,16,96,96);x.restore();
+ x.save();x.beginPath();x.ellipse(64,64,47,47,0,0,Math.PI*2);x.clip();x.drawImage(canvas,box.x,box.y,box.w,box.h,16,16,96,96);x.restore();
  const allowed=top?'0123456789.':'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.';
  const readings=[];
  for(const mode of ['7','8']){await worker.setParameters({tessedit_pageseg_mode:mode,tessedit_char_whitelist:allowed});const result=await worker.recognize(c);const text=result.data.text.replace(/\s/g,'');if((top?numeric:alpha).test(text.toUpperCase()))readings.push({text,confidence:result.data.confidence});}
  if(!readings.length)return null;
- if(readings.length===2&&readings[0].text.toUpperCase()===readings[1].text.toUpperCase())return readings[0].text;
+ if(readings.length===2&&readings[0].text.toUpperCase()===readings[1].text.toUpperCase()&&Math.max(...readings.map(r=>r.confidence))>=55)return readings[0].text;
  readings.sort((a,b)=>b.confidence-a.confidence);
  return readings[0].confidence>=70?readings[0].text:null;
 }
@@ -48,9 +48,10 @@ export async function readGridFrame(frame){
  const reader=new TitleBlockReader(()=>{}),signal=new AbortController().signal;
  try{
   const worker=await reader.getWorker(signal),ranges=[];
-  for(const [canvas,top] of [[frame.topStrip,true],[frame.sideStrip,false]]){
+  for(const [display,top,region] of [[frame.topStrip,true,frame.ocrTop],[frame.sideStrip,false,frame.ocrSide]]){
+   const canvas=region?.canvas||display;
    if(!canvas)return null;
-   const heads=findGridHeads(canvas).sort((a,b)=>top?a.x-b.x:a.y-b.y);
+   const heads=findGridHeads(canvas).filter(b=>!region||((top?b.x+b.w/2:b.y+b.h/2)>=region.lo&&(top?b.x+b.w/2:b.y+b.h/2)<=region.hi)).sort((a,b)=>top?a.x-b.x:a.y-b.y);
    if(!heads.length)return null;
    const readings=[];for(const head of heads)readings.push(await readHead(canvas,head,worker,top));
    // Never silently shrink the range when an endpoint could not be read.

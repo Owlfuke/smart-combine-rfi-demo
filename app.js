@@ -1,3 +1,5 @@
+import {assertNewRevisions} from './versions.mjs';
+import {createSignature} from './state-signature.mjs';
 import {editGrid} from "./grids.mjs";
 import {installRfi} from "./rfi.mjs";
 import {showRevisionHistory} from "./revision-history.mjs";
@@ -11,7 +13,8 @@ import {Engine} from "./engine.mjs";
 
 const $=id=>document.getElementById(id);
 let store,p=null,pool=new Map(),busy=true,importActive=false,blocked=false,saveTimer,saveFlight=null,committed="",renaming=false,dragId=null;
-const signature=q=>JSON.stringify({...q,revision:0,savedAt:0});
+const compactSignature=createSignature();
+const signature=q=>compactSignature({...q,revision:0,savedAt:0});
 const selected=()=>p?.layers.find(l=>l.id===p.selectedId);
 const base=()=>p?.layers.find(l=>l.id===p.baseId);
 function toast(message,isError=false,action=null){
@@ -22,7 +25,7 @@ function toast(message,isError=false,action=null){
   $("toasts").append(box);setTimeout(()=>box.remove(),isError?18000:9000);
 }
 function undoAction(){
-  const id=p.id, entry=JSON.stringify(p.history.at(-1));
+  const id=p.id, entry=compactSignature(p.history.at(-1));
   return {label:"ย้อนกลับ",run:()=>{
     if(p.id!==id||JSON.stringify(p.history.at(-1))!==entry){toast("มีการแก้ไขต่อแล้ว ใช้ปุ่ม Undo เพื่อย้อนตามลำดับ",true);return;}
     return historyMove(false);
@@ -157,6 +160,7 @@ const importer=new Importer({
   password,getProject:()=>p,onBusy:value=>{importActive=value;setBusy(busy);},onError:error,
   preview:l=>{const source=engine.cache.get(l.assetId)?.source;if(!source)return null;const c=document.createElement("canvas");c.width=240;c.height=Math.max(1,Math.round(source.height*240/source.width));c.getContext("2d").drawImage(source,0,0,c.width,c.height);return c.toDataURL();},
   onCommit:async(items,assets)=>{
+    assertNewRevisions(items,p.layers);
     if(busy||blocked)throw Error("โปรดรอการทำงานปัจจุบันก่อนนำเข้า");
     if(p.calibration)throw Error("ยืนยันหรือยกเลิกการจับคู่กริดก่อนนำเข้าแผ่นที่ตรวจแล้ว");
     setBusy(true);try{
@@ -233,8 +237,27 @@ function renderLayers(){
     actions.append(cardButton("↑","เลื่อนขึ้น "+l.name,()=>moveLayer(l.id,p.layers.indexOf(l)-1),l.locked||!!p.calibration||p.layers.indexOf(l)===0));
     actions.append(cardButton("↓","เลื่อนลง "+l.name,()=>moveLayer(l.id,p.layers.indexOf(l)+1),l.locked||!!p.calibration||p.layers.indexOf(l)===p.layers.length-1));
     const del=cardButton("ลบ","ลบภาพ "+l.name,()=>remove(l),l.locked||!!p.calibration);del.className="danger";actions.append(del);actions.append(cardButton("แก้ไขชื่อ","แก้ไขชื่อแบบ "+l.name,()=>openDrawingName(l),l.locked||!!p.calibration));actions.append(cardButton("ประวัติ","ประวัติ Revision "+l.name,()=>showRevisionHistory(p.layers,l.id,engine.cache)));actions.append(cardButton("กริด","กำหนดกริด "+l.name,()=>editGrid(l,engine.cache.get(l.assetId)?.source,(lines,bands)=>mutate("บันทึกกริดแล้ว",()=>{l.gridLines=lines;l.gridBands=bands;})),l.locked||!!p.calibration));row.append(actions);list.append(row);
-    if(l.id===p.selectedId){
-      const settings=document.createElement('div');settings.className='card-layer-settings';settings.append(properties);row.append(settings);
+    {
+      const settings=document.createElement('div');settings.className='card-layer-settings';const controls=l.id===p.selectedId?properties:properties.cloneNode(true);
+      controls.querySelectorAll(".card-order-actions").forEach(group=>group.remove());
+      if(controls!==properties){
+        const fields={'drawing-discipline':'discipline','blend-mode':'blend','overlay-color-mode':'colorMode','overlay-ink-color':'color','opacity-slider':'opacity'};
+        for(const [id,field] of Object.entries(fields)){const input=controls.querySelector('#'+id);input.value=field==='opacity'?Math.round(l.opacity*100):l[field];input.disabled=l.locked||!!p.calibration;
+          let gesture=false;input.addEventListener('input',()=>{if(!['color','opacity'].includes(field)||l.locked||p.calibration)return;if(!gesture){checkpoint(p);gesture=true;}l[field]=field==='opacity'?Number(input.value)/100:input.value;if(field==='opacity')controls.querySelector('[data-control="opacity-value"]').textContent=input.value+'%';engine.render();schedule();});
+          input.addEventListener('change',()=>safe(()=>{if(['color','opacity'].includes(field)){gesture=false;update();schedule();}else return mutate('',()=>{l[field]=input.value;});}));input.addEventListener('blur',()=>gesture=false);
+        }
+        controls.querySelector('#opacity-value').textContent=Math.round(l.opacity*100)+'%';
+        for(const e of [controls,...controls.querySelectorAll('[id]')]){if(e.id){e.dataset.control=e.id;e.removeAttribute('id');}}
+        for(const e of controls.querySelectorAll('[for]'))e.removeAttribute('for');
+      }
+      settings.append(controls);row.append(settings);
+      const buttons=[...actions.children],topActions=document.createElement('div'),viewActions=document.createElement('div'),orderActions=document.createElement('div');
+      topActions.className='card-title-actions';viewActions.className='card-view-actions';orderActions.className='card-order-actions';
+      topActions.append(buttons[5],buttons[6]);head.append(topActions);
+      const baseButton=cardButton('▣','ใช้เป็นแผ่นฐาน '+l.name,()=>{choose();$('set-base').click();},!!p.calibration||l.id===p.baseId);
+      const calibrate=cardButton('Calibrate','Calibrate '+l.name,()=>{choose();toggleCalibratePanel(true);},!!p.calibration||l.id===p.baseId);
+      viewActions.append(buttons[0],baseButton,buttons[1],calibrate,buttons[7],badge);actions.append(viewActions);
+      orderActions.append(buttons[4],buttons[2],buttons[3]);controls.querySelector('.card-quick-controls').append(orderActions);
       settings.addEventListener('click',e=>e.stopPropagation());settings.addEventListener('keydown',e=>e.stopPropagation());settings.addEventListener('dragstart',e=>{e.preventDefault();e.stopPropagation();});
     }
   }

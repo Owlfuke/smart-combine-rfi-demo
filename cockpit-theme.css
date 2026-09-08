@@ -36,3 +36,40 @@ body.calibrate-open #inspector-panel>.panel-heading,body.calibrate-open #inspect
 #calibrate-panel-close{position:absolute;right:10px;top:10px;display:block!important}
 body.canvas-focus #calibrate-launcher{bottom:50px}
 body.canvas-focus.calibrate-open #inspector-panel{bottom:90px}
+/* Expanded drawing cards: direct controls on every sheet. */
+body:not(.register-view):not(.hide-left) .workspace{grid-template-columns:minmax(460px,32%) minmax(0,1fr)}
+.layer-card{padding:14px;border-radius:12px;cursor:default}
+.layer-card .row-head{align-items:flex-start;gap:12px;flex-wrap:wrap}
+.layer-card .layer-thumb{width:76px;height:76px;grid-row:span 2}
+.layer-card .layer-title strong{font-size:14px;line-height:1.5}
+.layer-card .layer-title small{display:none}
+.card-title-actions{display:flex;gap:5px;margin-left:auto}
+.card-title-actions button,.card-view-actions button,.card-order-actions button{font-size:12px;padding:8px}
+.layer-actions{margin-top:8px}.card-view-actions{display:flex;align-items:center;gap:7px;flex-wrap:wrap;width:100%}.card-view-actions small{margin-left:auto;color:var(--muted)}
+.card-layer-settings{border-top:0;padding-top:4px;margin-top:8px}
+.card-layer-settings>section{padding:0!important;border:0!important;background:transparent!important}
+.card-layer-settings [data-control=selected-name],.card-layer-settings #blend-hint,.card-layer-settings [data-control=blend-hint],.card-layer-settings #set-base,.card-layer-settings [data-control=set-base]{display:none}
+.card-quick-controls{align-items:flex-end;gap:10px}.card-blend-controls{max-width:none;min-width:190px}.card-order-actions{display:flex;gap:5px;margin-left:auto}
+.card-layer-settings .card-blend-controls select{height:36px;font-size:12px}.card-layer-settings .card-quick-buttons select{height:36px;width:70px}.card-quick-buttons input[type=color]{width:34px;height:34px}
+.card-opacity{border-top:1px solid var(--border);padding-top:15px;margin-top:15px;gap:12px}.card-opacity input{height:22px}.card-layer-settings .card-opacity label,.card-opacity output{font-size:14px}
+@media(max-width:1000px){body:not(.register-view):not(.hide-left) .workspace{grid-template-columns:380px minmax(0,1fr)}.card-title-actions{width:100%;justify-content:flex-end}.card-order-actions{margin-left:auto}}
+/* Compact spacing while keeping every control visible. */
+.layer-card{display:grid;grid-template-columns:64px minmax(0,1fr) auto;gap:5px 8px;padding:10px;margin-bottom:8px}
+.layer-card .row-head{display:contents}
+.layer-card .layer-thumb{grid-column:1;grid-row:1/3;width:64px;height:64px;align-self:start}
+.layer-card .layer-title{grid-column:2;grid-row:1}
+.layer-card .layer-title strong{font-size:13px;line-height:1.35}
+.layer-card .card-title-actions{grid-column:3;grid-row:1;width:auto;gap:4px}
+.layer-card .layer-actions{grid-column:2/-1;grid-row:2;margin:0;align-self:start}
+.card-title-actions button,.card-view-actions button,.card-order-actions button{padding:5px 7px;min-height:30px;font-size:11px}
+.layer-card .card-view-actions{gap:4px}.card-view-actions small{font-size:10px}
+.layer-card .card-layer-settings{grid-column:1/-1;margin-top:3px;padding-top:0}
+.card-quick-controls{gap:6px}.card-quick-buttons{padding-top:0;gap:4px}.card-blend-controls{gap:6px;min-width:150px}
+.card-layer-settings .card-blend-controls select{height:30px;margin-top:2px;font-size:11px}
+.card-layer-settings .card-quick-buttons select{height:30px;width:60px}
+.card-quick-buttons input[type=color]{width:30px;height:30px;min-width:30px}
+.card-order-actions{gap:4px}
+.card-opacity{padding-top:7px;margin-top:8px;gap:3px}
+.card-layer-settings .card-opacity label,.card-opacity output{font-size:12px}
+.card-opacity input{height:18px}
+@media(max-width:1000px){.layer-card{grid-template-columns:56px minmax(0,1fr)}.layer-card .layer-thumb{width:56px;height:56px}.layer-card .card-title-actions{grid-column:2;grid-row:2;justify-content:flex-start}.layer-card .layer-actions{grid-column:1/-1;grid-row:3}}

@@ -190,7 +190,7 @@ export class Importer{
     let ready=0,duplicates=0;
     for(const item of chosen){
       const m=item.meta,c=conflicts(item,this.items,this.selected,this.currentProject().layers);
-      const duplicate=m&&(c.existing.length||c.incoming.length);if(m)ready++;if(duplicate)duplicates++;
+      const duplicate=m&&(c.duplicates.length||c.incoming.length);if(m)ready++;if(duplicate)duplicates++;
       const card=document.createElement("button");card.className="ocr-sheet-card";card.disabled=!m;
       const img=document.createElement("img");img.src=item.thumbnail||m?.previewUrl||"";img.alt=item.doc.file.name+" หน้า "+item.page;if(img.getAttribute("src"))card.append(img);
       const name=document.createElement("strong");name.textContent=m?.number||item.doc.file.name+" · "+item.page;
@@ -198,14 +198,14 @@ export class Importer{
       badge.textContent=!m?(item.reading?"◌ กำลัง OCR":"◌ รอ OCR"):m.confirmed?"✓ ยืนยันแล้ว":duplicate?"⚠ Version conflict":"⚠ รอตรวจชื่อ";
       card.append(name,badge);card.addEventListener("click",()=>this.openSheet(item.key));grid.append(card);
     }
-    $("ocr-queue-status").textContent="อ่านแล้ว "+ready+"/"+chosen.length+" · เลขซ้ำ "+duplicates+" · รอยืนยัน "+chosen.filter(i=>i.meta&&!i.meta.confirmed).length;
+    $("ocr-queue-status").textContent="อ่านแล้ว "+ready+"/"+chosen.length+" · เลขแบบและ Revision ซ้ำ "+duplicates+" · รอยืนยัน "+chosen.filter(i=>i.meta&&!i.meta.confirmed).length;
     $("ocr-queue-commit").disabled=this.compiling||!chosen.some(i=>i.meta?.confirmed&&this.canApprove(i));
     $("ocr-queue-confirm").disabled=this.reviewing;
   }
 
   canApprove(item){
     if(!item.meta?.title.trim())return false;const c=conflicts(item,this.items,this.selected,this.currentProject().layers);
-    return !c.incoming.length&&(!c.existing.length||c.existing.some(l=>l.id===item.meta.versionOf));
+    return !c.incoming.length&&!c.duplicates.length;
   }
   reviewStatus(){
     const chosen=(this.items||[]).filter(item=>this.selected.has(item.key));
@@ -259,7 +259,7 @@ export class Importer{
       const refresh=()=>{
         const c=conflicts(item,this.items,this.selected,this.currentProject().layers);
         conflictPanel.replaceChildren();const existingHeading=document.createElement("h3");existingHeading.textContent="Existing sheet";conflictPanel.append(existingHeading);
-        const info=document.createElement("p");info.textContent=c.incoming.length?"เลขแบบซ้ำกับหน้าอื่นในชุดนี้ · แก้เลขหรือข้ามหน้าที่ซ้ำ":c.existing.length?"พบเลขแบบเดิม "+c.existing.length+" เวอร์ชัน · ตรวจเทียบก่อนเพิ่ม":"ไม่พบเลขแบบซ้ำในงานนี้";conflictPanel.append(info);
+        const info=document.createElement("p");info.textContent=c.incoming.length?"เลขแบบและ Revision ซ้ำกับหน้าอื่นในชุดนี้ · แก้ Revision หรือข้ามหน้า":c.duplicates.length?"เลขแบบและ Revision นี้มีอยู่แล้ว · ห้ามนำเข้าซ้ำ แม้เลือกแบบเดิม":c.existing.length?"พบเลขแบบเดิม "+c.existing.length+" เวอร์ชัน · ตรวจเทียบก่อนเพิ่ม":"ไม่พบเลขแบบซ้ำในงานนี้";conflictPanel.append(info);
         if(c.existing.length){const choose=document.createElement("select");choose.className="version-parent";choose.setAttribute("aria-label","เลือกแบบเดิมเพื่อเพิ่มเป็นเวอร์ชันใหม่");choose.add(new Option("เลือกแบบเดิมเพื่อเพิ่มเป็นเวอร์ชันใหม่",""));for(const old of c.existing)choose.add(new Option(old.name+" · "+(old.revisionDate||"ไม่ระบุวันที่"),old.id));choose.value=m.versionOf||"";choose.addEventListener("change",()=>{m.versionOf=choose.value;m.confirmed=false;refresh();});conflictPanel.append(choose);const old=c.existing.find(l=>l.id===m.versionOf)||c.existing[0];const oldText=document.createElement("p");oldText.textContent="Sheet Number: "+(old.number||"—")+" · Drawing Title: "+(old.drawingTitle||old.name)+" · Revision "+(old.revision||"ไม่ระบุ")+" · "+(old.revisionDate||"ไม่ระบุวันที่")+" — เก็บแบบเดิมไว้";conflictPanel.append(oldText);for(const [label,value] of [["Sheet Number",old.number],["Drawing Title",old.drawingTitle||old.name],["วันที่ Revision",old.revisionDate],["ครั้งที่ Revision",old.revision]]){const field=document.createElement("label");field.textContent=label;const input=document.createElement("input");input.readOnly=true;input.value=value||"ไม่ระบุ";field.append(input);conflictPanel.append(field);}const url=this.preview?.(old);if(url){const img=document.createElement("img");img.src=url;img.alt="แบบเดิมที่เคยนำเข้า";conflictPanel.append(img);}}
         summary.textContent=displayName(m);
         state.textContent=m.confirmed?"✓ ยืนยันแล้ว":"รอยืนยัน";
@@ -360,7 +360,7 @@ export class Importer{
           const assetId=(item.doc.type==="pdf"||resized)?item.key+":raster-v1":item.doc.id;
           const blob=resized?await toBlob(c):(item.preparedBlob||(item.doc.type==="pdf"?await toBlob(c):item.doc.file));check(signal);
           assets.set(assetId,blob);assets.set(item.doc.id,item.doc.file);
-          result.push({versionOf:item.meta.versionOf||null,importedAt:Date.now(),name:displayName(item.meta),drawingTitle:item.meta.title.trim(),originalName:item.doc.file.name,
+          result.push({versionOf:item.meta.versionOf||conflicts(item,this.items,this.selected,this.currentProject().layers).existing[0]?.id||null,importedAt:Date.now(),name:displayName(item.meta),drawingTitle:item.meta.title.trim(),originalName:item.doc.file.name,
             titleBlock:{method:item.meta.method,region:item.meta.region,quality:item.meta.quality,confirmed:true,confirmedAt:item.meta.confirmedAt},page:item.page,pageCount:item.doc.pages,fingerprint:item.doc.id,
             sourceId:item.doc.id,assetId,width:c.width,height:c.height,discipline:$("import-discipline").value,
             revisionDate:(item.meta.revisionDate||"").trim(),revisionHistory:item.meta.revisionHistory||[],number:item.meta.number.trim(),revision:item.meta.revision.trim()});
