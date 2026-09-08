@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark"><title>SMART COMBINE TO RFI</title>
+
+<link rel="stylesheet" href="app.css"><link rel="stylesheet" href="cockpit-theme.css"><script src="vendor/jspdf/jspdf.umd.min.js"></script><script type="module" src="app.js"></script>
+<link rel="manifest" href="./webmanifest.json"><meta name="theme-color" content="#101c2e"><script type="module" src="./pwa.js"></script></head>
+<body><div id="pwa-bar" style="padding:6px 12px;background:#172e41;display:flex;gap:12px;align-items:center;flex-wrap:wrap"><strong>PWA DEMO 0.1</strong><span id="pwa-status" role="status">กำลังเตรียมออฟไลน์…</span><button id="pwa-install" hidden>ติดตั้งแอป</button><a href="./guide.html" target="_blank" rel="noopener">คู่มือใช้งาน</a></div><nav id="layout-controls" aria-label="จัดพื้นที่ทำงาน"><button data-layout="menus" aria-expanded="true">เมนูบน</button><button data-layout="left" aria-expanded="true">รายการแบบ</button><button data-layout="tools" aria-expanded="true">เครื่องมือ</button><button data-layout="status" aria-expanded="true">แถบสถานะ</button><button id="layout-reset">เปิดทุกแผง</button><button id="layout-focus" aria-pressed="false">พื้นที่ทำงานเต็ม</button></nav>
+<header class="app-header">
+  <div class="brand"><span class="brand-icon">⊞</span><div><h1>SMART COMBINE <em>TO RFI</em></h1><small>DRAWING COORDINATION · WORKSPACE</small></div></div>
+  <div class="project-actions"><label class="sr-only" for="project-select">เปิดงาน</label><select id="project-select" disabled><option>กำลังเปิดงาน…</option></select><button id="new-project" disabled>＋ งานใหม่</button><button id="rename-project" disabled>เปลี่ยนชื่อ</button></div>
+  <div class="save-actions"><span id="save-status" role="status">กำลังเปิดที่เก็บข้อมูล…</span><input id="restore-file" type="file" accept=".scrfi" hidden><button id="restore-project" disabled>กู้คืนไฟล์สำรอง</button><button id="backup-project" disabled title="สำรองโครงการปัจจุบันพร้อมไฟล์ต้นฉบับ">สำรองโครงการ</button><button id="save-state" disabled>บันทึก</button></div>
+</header>
+<div class="journey"><span>01 · งาน</span><span>02 · นำเข้า</span><span>03 · เลือกแผ่น</span><span>04 · Layers</span><span>05 · จับคู่กริด</span><span class="later">06–08 · RFI — ขั้นถัดไป</span></div>
+<div id="error-banner" role="alert" hidden><span id="error-message"></span><button id="recover">ลองเปิดงานล่าสุด</button><button id="dismiss-error">ปิดข้อความ</button></div>
+
+<main class="workspace" id="workspace" inert>
+<aside class="register panel" id="register-panel"><button class="panel-fold" data-layout="left" data-panel="left" aria-controls="register-panel" aria-expanded="true" title="พับรายการแบบ">‹</button>
+  <div class="workspace-navigation"><small>DRAWING COORDINATION</small><button data-workspace-view="register" aria-pressed="false">▦ ทะเบียนแบบ</button><button data-workspace-view="canvas" aria-pressed="true">⊞ พื้นที่ซ้อนแบบ</button></div><div class="panel-heading"><h2>แผ่นในงานปัจจุบัน</h2><p>แบบแยกตามงาน · เรียงแผ่นบนสุดไว้ด้านหน้า</p></div>
+  <div id="drawing-drop-zone" class="drop-zone"><input class="sr-only" id="drawing-file-input" type="file" accept=".pdf,.png,.jpg,.jpeg" multiple><label for="drawing-file-input"><strong>＋ เลือกไฟล์ หรือลากมาวาง</strong><span>PDF / PNG / JPG · ไม่เกิน 100 MB ต่อไฟล์</span></label></div>
+  <div class="filters" role="group" aria-label="กรองสาขางาน"><button data-filter="ALL" aria-pressed="true">ทั้งหมด</button><button data-filter="AR">AR</button><button data-filter="ST">ST</button><button data-filter="MEP">MEP</button></div>
+  <div class="list-caption"><span id="layer-count">0 แผ่น</span><span>☷ ลากเพื่อเรียง</span></div>
+  <div id="drawing-list" class="layer-list" aria-label="รายการแผ่นแบบ"></div>
+  <div class="panel-foot">เมาส์กลาง / ขวาค้าง = Pan · ล้อเมาส์ = Zoom</div>
+</aside>
+<section id="register-page" hidden><div class="register-hero"><small>PROJECT · DRAWING REGISTER</small><h2 id="register-project-name"></h2><p id="register-summary"></p></div><section id="ocr-queue" hidden aria-label="แผ่นที่รอตรวจ"><div class="queue-heading"><h2>แผ่นที่นำเข้า · ตรวจชื่อและเวอร์ชัน</h2><span id="ocr-queue-status" role="status" aria-live="polite"></span><button id="ocr-queue-stop">หยุด OCR / กรอกเอง</button><button id="ocr-queue-cancel">ยกเลิกชุดนี้</button></div><div id="ocr-queue-grid"></div><div class="dialog-actions"><button id="ocr-queue-confirm">ยืนยันทั้งหมดที่ไม่มีข้อขัดแย้ง</button><button id="ocr-queue-commit" class="primary">นำเข้าหน้าที่ยืนยันแล้ว</button></div></section><div class="register-page-actions"><div><h2>ทะเบียนแบบทั้งหมด</h2><p>เลือกแผ่นเพื่อเปิดในพื้นที่ซ้อนแบบ</p></div><input id="register-search" placeholder="ค้นหาเลขแบบ ชื่อแบบ หรือสาขา" aria-label="ค้นหาในทะเบียนแบบ"><button id="register-import" class="primary">＋ นำเข้าแบบ</button></div><div id="register-gallery"></div></section><section class="canvas-panel">
+  <div class="toolbar">
+    <div class="tool-group"><button id="undo-button" title="ย้อนกลับ Ctrl+Z">↶ Undo</button><button id="redo-button" title="ทำซ้ำ Ctrl+Shift+Z">↷ Redo</button></div>
+    <div class="tool-group"><button id="zoom-out" aria-label="ซูมออก">−</button><output id="zoom-level">100%</output><button id="zoom-in" aria-label="ซูมเข้า">＋</button><button id="fit-view">พอดีจอ</button><button id="pan-toggle" aria-pressed="false">Pan</button></div>
+    <details id="comparison-tools" class="comparison-tools"><summary>เครื่องมือเสริม</summary><div class="comparison-options"><label>Compare / Overlay <select id="comparison-mode"><option value="normal">แสดงทุกแผ่น</option><option value="overlay">Overlay · ฐานแดง / แผ่นเลือกน้ำเงิน</option><option value="swipe">Compare · เลื่อนเส้นแบ่ง</option></select></label><input id="comparison-split" type="range" min="0" max="100" value="50" aria-label="ตำแหน่งเส้นแบ่ง Compare" hidden><p class="hint">เลือกแผ่นซ้อนต่างจากแผ่นฐาน · ปิดเมนูเพื่อกลับมุมมองปกติ</p></div></details><button id="rfi-cloud" aria-pressed="false">Revision Cloud</button><button id="rfi-open">RFI</button><button id="marker-toggle" aria-pressed="false">จุดอ้างอิง: ปิด</button>
+  </div>
+  <div class="canvas-title"><span id="base-label">ฐาน: ยังไม่เลือก</span><span id="active-label">แผ่นที่เลือก: —</span></div>
+  <div id="canvas-viewport">
+    <canvas id="combined-canvas" aria-label="พื้นที่ซ้อนทับแบบ"></canvas><canvas id="calibration-guide-canvas" aria-hidden="true"></canvas>
+    <div id="canvas-empty-state"><div><span class="empty-icon">⊞</span><h2>เริ่มจากแผ่นแบบของคุณ</h2><p>นำเข้า PDF หรือภาพ เลือกแผ่นฐาน<br>แล้วจับคู่กริดของแต่ละแผ่นซ้อน</p></div></div>
+  </div>
+  <button id="calibrate-launcher" aria-controls="inspector-panel" aria-expanded="false">Not Calibrate</button><footer class="canvas-status"><span id="canvas-status" role="status">พร้อมใช้งาน</span><span id="calibration-status">ยังไม่จับคู่กริด</span></footer>
+</section>
+<aside class="inspector panel" id="inspector-panel"><button id="calibrate-panel-close" aria-label="ปิด Calibrate">×</button>
+  <div class="panel-heading"><h2>Calibrate</h2><p>จับคู่และตรวจจุดกริด</p></div>
+  <div class="inspector-scroll">
+    <section id="layer-properties">
+      <p id="selected-name" class="selected-name">เลือกแผ่นจากรายการด้านซ้าย</p>
+
+      <div class="card-quick-controls">
+        <div class="card-quick-buttons">
+          <select id="drawing-discipline" aria-label="สาขางาน" title="เปลี่ยนสาขางาน"><option>AR</option><option>ST</option><option>MEP</option></select>
+          <button id="set-base" title="ใช้เป็นแผ่นฐาน" aria-label="ใช้เป็นแผ่นฐาน">▣</button>
+          <input id="overlay-ink-color" type="color" value="#22c55e" aria-label="สีเส้น" title="สีเส้น">
+        </div>
+        <div class="card-blend-controls">
+          <label>Blend<select id="blend-mode" aria-label="Blend Mode"></select></label>
+          <label>สีย้อม<select id="overlay-color-mode" aria-label="สีแผ่นซ้อน"><option value="tint">ย้อมสีเส้น</option><option value="original">สีต้นฉบับ</option></select></label>
+        </div>
+      </div>
+
+      <p id="blend-hint" class="hint">ปรับสี Blend Mode และ Opacity ของแต่ละแผ่นได้แยกกัน</p>
+      <div class="card-opacity"><label for="opacity-slider">Opacity</label><output id="opacity-value">100%</output><input id="opacity-slider" type="range" min="0" max="100" value="100"></div>
+    </section>
+    <section class="calibration-card">
+      <div class="section-line"><h3>จับคู่จุดกริด</h3><span class="badge">2-POINT</span></div>
+      <p id="calibration-instruction">เลือกแผ่นซ้อน แล้วจับคู่กริดที่ตรงกันสองคู่</p>
+      <ol id="calibration-steps"><li>P1 · ฐาน</li><li>P2 · ฐาน</li><li>Q1 · ซ้อน</li><li>Q2 · ซ้อน</li></ol>
+      <button id="calibrate-button" class="primary">เริ่มจับคู่จุดกริด</button>
+      <div class="tool-group"><button id="calibration-back">ย้อนหนึ่งจุด</button><button id="calibration-cancel">ยกเลิก</button></div>
+      <div id="calibration-result" class="result" hidden></div>
+      <button id="calibration-apply" class="primary" hidden>ยืนยันผลจับคู่</button>
+      <button id="verify-grid">ตรวจจุดที่สาม</button>
+      <p id="verification-result" class="hint">ยังไม่ได้ตรวจจุดอิสระ</p>
+      <p class="hint">ค่าคลาดเคลื่อนเป็น px ของแผ่นฐาน ไม่ใช่ระยะจริง และไม่ยืนยันความถูกต้องทั้งแผ่น</p>
+    </section>
+    <details class="future-section"><summary>ข้อมูล RFI เดิม · ใช้งานขั้นถัดไป</summary><label>ชื่อโครงการ<input id="project-name"></label><label>เลขที่ RFI<input id="rfi-number"></label><label>คำถามวิศวกรรม<textarea id="engineering-question"></textarea></label><p class="hint">Annotation และ Export จะพัฒนาในข้อ 6–8</p></details>
+  </div>
+</aside>
+<aside id="rfi-panel" hidden><button id="rfi-close" aria-label="ปิด RFI">×</button><h2>RFI · จุดขัดแย้ง</h2><select id="rfi-list" aria-label="เลือก RFI"></select><p id="rfi-sheet">วาด Revision Cloud เพื่อสร้าง RFI</p><img hidden id="rfi-preview" role="button" tabindex="0" title="กดขยายเพื่อตรวจหัวกริด" alt="ภาพ RFI พร้อมแถบหัวกริดและเมฆ · กดขยาย"><p id="rfi-grid-warning" role="status" hidden></p><div id="rfi-legend"></div><label>ขอบเขต Grid line<input id="rfi-grid" maxlength="160" placeholder="เช่น Gl.A-B/1-2" required></label><label>คำถาม<textarea id="rfi-question" rows="6" maxlength="10000"></textarea></label><button id="rfi-resize">ปรับขนาดเมฆ</button><div id="rfi-resize-actions" hidden><button id="rfi-resize-save">บันทึกขนาด</button><button id="rfi-resize-cancel">ยกเลิก</button></div><button id="rfi-delete" disabled title="ลบวงเมฆ ภาพครอป และคำถามของรายการนี้ · Undo คืนได้">ลบวงนี้</button><button id="rfi-download" disabled>Download RFI PDF</button></aside></main>
+<div id="toasts" aria-live="polite"></div>
+<dialog id="drawing-name-dialog" aria-labelledby="drawing-name-heading"><form id="drawing-name-form"><h2 id="drawing-name-heading">แก้ไขข้อมูลแบบ</h2><label>ชื่อแบบ<input id="drawing-title" required maxlength="180" autocomplete="off"></label>      <div class="field-pair"><label>เลขที่แบบ<input id="drawing-number" maxlength="100" placeholder="เช่น ST-101"></label><label>Revision<input id="drawing-revision" maxlength="40" placeholder="เช่น R02"></label></div>
+      <label>วันที่แก้ไข<input id="drawing-revision-date" maxlength="60" placeholder="วันที่จากตาราง Revision"></label><div class="dialog-actions"><button type="button" id="drawing-name-cancel">ยกเลิก</button><button type="submit" class="primary">บันทึก</button></div></form></dialog>
+<dialog id="project-dialog"><form id="project-form"><h2 id="project-dialog-title">สร้างงานใหม่</h2><label>ชื่องาน / โครงการ<input id="project-title-input" required maxlength="120" autocomplete="off"></label><p class="hint">งานแต่ละชุดแยกแบบและการจับคู่ออกจากกัน</p><div class="dialog-actions"><button type="button" id="project-cancel">ยกเลิก</button><button class="primary" type="submit">บันทึกชื่อ</button></div></form></dialog>
+<dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-message"></p><div class="dialog-actions"><button id="confirm-no">ยกเลิก</button><button id="confirm-yes" class="primary">ดำเนินการ</button></div></dialog>
+<dialog id="password-dialog"><form id="password-form"><h2>PDF มีรหัสผ่าน</h2><p id="password-file"></p><label>รหัสผ่าน<input id="pdf-password" type="password" autocomplete="off" required></label><p class="hint">ใช้เพื่อเปิดไฟล์ครั้งนี้เท่านั้น ไม่บันทึกรหัสผ่าน</p><div class="dialog-actions"><button type="button" id="password-cancel">ข้ามไฟล์นี้</button><button type="submit" class="primary">เปิด PDF</button></div></form></dialog>
+<dialog id="import-dialog"><button id="review-to-queue" hidden>กลับไป Thumbnails</button>
+  <div class="import-heading"><div><h2>เลือกหน้าที่ต้องการนำเข้า</h2><p class="hint">ตรวจ Thumbnail ก่อนเพิ่ม · สูงสุด 24 แผ่นต่อหนึ่งงาน</p></div><button id="import-cancel">ยกเลิก / ปิด</button></div>
+  <div class="import-fields"><label>สาขางาน<select id="import-discipline"><option>AR</option><option>ST</option><option>MEP</option></select></label><label>เลขที่แบบ (แก้รายแผ่นได้)<input id="import-number" maxlength="100" placeholder="ไม่บังคับ"></label><label>Revision<input id="import-revision" maxlength="40" placeholder="ไม่บังคับ"></label></div>
+  <div class="progress-wrap"><span id="import-progress-text" role="status"></span><progress id="import-progress"></progress></div>
+  <div id="import-errors" role="status"></div>
+  <div class="import-selection"><button id="import-all">เลือกชุดนี้</button><button id="import-none">ไม่เลือกทั้งหมด</button><span id="import-count">ยังไม่เลือกหน้า</span></div>
+  <div class="region-actions"><button id="define-regions">กำหนดพื้นที่อ่านแบบ</button><button id="clear-regions">ใช้ค้นหาอัตโนมัติ</button><span id="region-summary" role="status">ยังไม่กำหนดกรอบ</span></div><div id="thumbnail-grid"></div>
+<section id="title-review" hidden><div class="title-review-heading"><h3>ตรวจชื่อจาก Title Block ก่อนนำเข้า</h3><button id="title-skip-ocr" hidden>หยุด OCR / กรอกชื่อเอง</button><button id="title-confirm-all" type="button">ยืนยันทั้งหมด</button></div><p id="title-review-count" class="hint"></p><div id="title-review-list"></div></section>
+  <div class="dialog-actions"><button id="title-review-back" hidden>← กลับเลือกหน้า</button><button id="import-prev">← ชุดก่อนหน้า</button><button id="import-next">ชุดถัดไป →</button><button id="import-add" class="primary" disabled>อ่าน Title Block และตรวจชื่อ</button></div>
+</dialog>
+</body></html>
