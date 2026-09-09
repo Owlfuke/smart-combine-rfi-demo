@@ -1,3 +1,5 @@
+import {installAppMenus} from './app-menus.mjs';
+import {installMeasurements} from './measurements.mjs';
 import {assertNewRevisions} from './versions.mjs';
 import {createSignature} from './state-signature.mjs';
 import {editGrid} from "./grids.mjs";
@@ -466,6 +468,8 @@ listen("calibrate-launcher","click",()=>toggleCalibratePanel(!document.body.clas
 listen("calibrate-panel-close","click",()=>{toggleCalibratePanel(false);$("calibrate-launcher").focus();});
 
 installRfi({engine,getProject:()=>p,mutate,schedule,toast});
+installMeasurements({engine,getProject:()=>p,mutate,toast,getSource:async l=>pool.get(l.sourceId)||(await store.get('assets',l.sourceId))?.blob});
+installAppMenus();
 
 listen("restore-project","click",()=>{if(!busy&&!blocked&&!importActive)$("restore-file").click();});
 listen("restore-file","change",async()=>{
