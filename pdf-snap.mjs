@@ -10,4 +10,10 @@ export async function pdfSnapPoints(blob,layer){
  const seen=new Set();return points.filter(p=>{const key=Math.round(p.x*100)+','+Math.round(p.y*100);if(seen.has(key))return false;seen.add(key);return true;});
  }finally{await task.destroy();}
 }
-export function nearestSnap(points,layer,camera,q,radius=10){let best=null,d=radius;for(const p of points){const w=map(layer.transform,p),s={x:w.x*camera.zoom+camera.x,y:w.y*camera.zoom+camera.y},distance=Math.hypot(s.x-q.x,s.y-q.y);if(distance<d){best=s;d=distance;}}return best;}
+export function nearestSnap(points,layer,camera,q,radius=10){
+ const t=layer.transform,z=camera.zoom,a=t.a*z,b=t.b*z,c=t.c*z,d=t.d*z,e=t.e*z+camera.x,f=t.f*z+camera.y;
+ let distance=radius*radius,bestX=0,bestY=0,found=false;
+ for(const p of points){const x=a*p.x+c*p.y+e,y=b*p.x+d*p.y+f,dx=x-q.x,dy=y-q.y,squared=dx*dx+dy*dy;
+ if(squared<distance){distance=squared;bestX=x;bestY=y;found=true;}}
+ return found?{x:bestX,y:bestY}:null;
+}

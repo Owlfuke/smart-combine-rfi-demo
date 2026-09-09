@@ -43,7 +43,11 @@ export class Engine {
   }
   screen(e){const r=this.canvas.getBoundingClientRect();return {x:(e.clientX-r.left)*this.width/r.width,y:(e.clientY-r.top)*this.height/r.height};}
   world(q){const c=this.p.camera;return {x:(q.x-c.x)/c.zoom,y:(q.y-c.y)/c.zoom};}
-  track(e){this.pointer={clientX:e.clientX,clientY:e.clientY};this.drawGuide();}
+  track(e){this.pointer={clientX:e.clientX,clientY:e.clientY};this.scheduleGuide();}
+  scheduleGuide(){
+    if(this.guideFrame)return;
+    this.guideFrame=requestAnimationFrame(()=>{this.guideFrame=0;try{this.drawGuide();}catch(e){this.error(e);}});
+  }
   cursor(){this.canvas.style.cursor=this.drag?"grabbing":this.p?.calibration&&this.stage()!=="review"?"none":this.p?.panMode?"grab":"default";}
   resize(){
     const r=this.canvas.parentElement.getBoundingClientRect();
@@ -180,6 +184,7 @@ export class Engine {
     x.font="bold 12px system-ui";x.lineWidth=3;x.strokeStyle="white";x.strokeText(label,px+14,py+offset);x.fillStyle=color;x.fillText(label,px+14,py+offset);x.restore();
   }
   drawGuide(){
+    if(this.guideFrame){cancelAnimationFrame(this.guideFrame);this.guideFrame=0;}
     const x=this.gctx;x.setTransform(1,0,0,1,0,0);x.clearRect(0,0,this.guide.width,this.guide.height);
     if(!this.p?.calibration||this.stage()==="review"||!this.pointer||this.drag)return;
     const q=this.screen(this.pointer);if(q.x<0||q.y<0||q.x>this.width||q.y>this.height)return;

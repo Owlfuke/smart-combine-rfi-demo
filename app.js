@@ -43,11 +43,18 @@ function status(message){$("canvas-status").textContent=message;}
 function savedText(){
   $("save-status").textContent=p?.savedAt?"บันทึก "+new Date(p.savedAt).toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit",second:"2-digit"}):"พร้อมบันทึกอัตโนมัติ";
 }
+let interactionUntil=0;
+function deferAutosave(){interactionUntil=performance.now()+1200;}
+window.addEventListener('pointermove',e=>{if(e.buttons)deferAutosave();},{passive:true});
+window.addEventListener('pointerdown',deferAutosave,{passive:true});
+window.addEventListener('wheel',deferAutosave,{passive:true});
 function schedule(){
+  if(p?.calibration){clearTimeout(saveTimer);$("save-status").textContent="พักบันทึกอัตโนมัติระหว่าง Calibrate · กดบันทึกเองได้";return;}
   if(!p||busy||blocked)return;
-  if(signature(p)===committed)return;
-  $("save-status").textContent="มีการเปลี่ยนแปลง · รอบันทึก";
-  clearTimeout(saveTimer);saveTimer=setTimeout(()=>safe(save),250);
+  $("save-status").textContent="มีการเปลี่ยนแปลง · รอบันทึกเมื่อหยุดใช้งาน";
+  clearTimeout(saveTimer);
+  const attempt=()=>{if(!p||p.calibration||blocked)return;const remaining=interactionUntil-performance.now();if(busy||remaining>0){saveTimer=setTimeout(attempt,Math.max(300,remaining));return;}safe(save);};
+  saveTimer=setTimeout(attempt,1200);
 }
 async function save(){
   clearTimeout(saveTimer);
@@ -70,10 +77,10 @@ async function save(){
     }
   })();
   try{await saveFlight;}finally{saveFlight=null;}
-  if(p===current&&signature(p)!==committed)return save();
+  if(p===current&&!p.calibration&&signature(p)!==committed)return save();
 }
 const engine=new Engine($("combined-canvas"),$("calibration-guide-canvas"),{
-  change:full=>{if(full)update();else updateView();schedule();},status,error
+  change:full=>{if(full){update();schedule();}else updateView();},status,error
 });
 async function loadAssets(record){
   const map=new Map();
@@ -218,7 +225,7 @@ function renderLayers(){
   for(const l of items){
     const row=document.createElement("article");row.className="layer-card"+(l.id===p.selectedId?" selected":"");row.dataset.id=l.id;
     row.draggable=!l.locked&&!p.calibration;row.tabIndex=0;row.setAttribute("aria-label","แผ่น "+l.name+" หน้า "+(l.page||1));
-    const choose=()=>{if(p.calibration)return;p.selectedId=l.id;update();schedule();};
+    const choose=()=>{if(p.calibration)return;p.selectedId=l.id;update();};
     row.addEventListener("click",choose);row.addEventListener("keydown",e=>{if(e.target===row&&(e.key==="Enter"||e.key===" ")){e.preventDefault();choose();}});
     // Disable native card dragging before a control starts its pointer gesture.
     row.addEventListener("pointerdown",e=>{row.draggable=!l.locked&&!p.calibration&&!e.target.closest('input,select,button,textarea,label,.card-layer-settings');});
@@ -245,7 +252,7 @@ function renderLayers(){
       if(controls!==properties){
         const fields={'drawing-discipline':'discipline','blend-mode':'blend','overlay-color-mode':'colorMode','overlay-ink-color':'color','opacity-slider':'opacity'};
         for(const [id,field] of Object.entries(fields)){const input=controls.querySelector('#'+id);input.value=field==='opacity'?Math.round(l.opacity*100):l[field];input.disabled=l.locked||!!p.calibration;
-          let gesture=false;input.addEventListener('input',()=>{if(!['color','opacity'].includes(field)||l.locked||p.calibration)return;if(!gesture){checkpoint(p);gesture=true;}l[field]=field==='opacity'?Number(input.value)/100:input.value;if(field==='opacity')controls.querySelector('[data-control="opacity-value"]').textContent=input.value+'%';engine.render();schedule();});
+          let gesture=false;input.addEventListener('input',()=>{if(!['color','opacity'].includes(field)||l.locked||p.calibration)return;if(!gesture){checkpoint(p);gesture=true;}l[field]=field==='opacity'?Number(input.value)/100:input.value;if(field==='opacity')controls.querySelector('[data-control="opacity-value"]').textContent=input.value+'%';engine.render();});
           input.addEventListener('change',()=>safe(()=>{if(['color','opacity'].includes(field)){gesture=false;update();schedule();}else return mutate('',()=>{l[field]=input.value;});}));input.addEventListener('blur',()=>gesture=false);
         }
         controls.querySelector('#opacity-value').textContent=Math.round(l.opacity*100)+'%';
@@ -285,6 +292,7 @@ function updateView(){
   $("canvas-empty-state").hidden=!!p.layers.length;
 }
 function update(){
+  engine.refreshRfi?.();
   if(document.body.classList.contains("register-view"))renderRegisterPage();
   if(!p)return;updateView();renderLayers();
   const l=selected(),cal=p.calibration,locked=!l||l.locked||!!cal,isBase=l?.id===p.baseId;
@@ -349,8 +357,8 @@ listen("calibration-apply","click",()=>{
   p.history.push(prior);if(p.history.length>LIMITS.history)p.history.shift();p.future=[];
   engine.apply();update();schedule();toast("บันทึกผลแล้ว",false,undoAction());
 });
-listen("marker-toggle","click",()=>{p.showMarkers=!p.showMarkers;update();schedule();});
-listen("pan-toggle","click",()=>{p.panMode=!p.panMode;update();schedule();});
+listen("marker-toggle","click",()=>{p.showMarkers=!p.showMarkers;update();});
+listen("pan-toggle","click",()=>{p.panMode=!p.panMode;update();});
 listen("zoom-in","click",()=>engine.zoom(1.2));listen("zoom-out","click",()=>engine.zoom(1/1.2));listen("fit-view","click",()=>engine.fit());
 listen("undo-button","click",()=>historyMove(false));listen("redo-button","click",()=>historyMove(true));
 document.addEventListener("keydown",e=>{
@@ -358,7 +366,7 @@ document.addEventListener("keydown",e=>{
   if(e.key==="Escape"&&p?.calibration){e.preventDefault();engine.cancel();}
   if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){e.preventDefault();safe(()=>historyMove(e.shiftKey));}
 });
-for(const b of document.querySelectorAll("[data-filter]"))b.addEventListener("click",()=>{if(p.calibration)return;p.filter=b.dataset.filter;update();schedule();});
+for(const b of document.querySelectorAll("[data-filter]"))b.addEventListener("click",()=>{if(p.calibration)return;p.filter=b.dataset.filter;update();});
 listen("drawing-file-input","change",e=>{const files=Array.from(e.target.files);e.target.value="";return importFiles(files);});
 const zone=$("drawing-drop-zone");
 zone.addEventListener("dragover",e=>{if(dragId)return;e.preventDefault();zone.classList.add("over");});
@@ -367,6 +375,23 @@ zone.addEventListener("drop",e=>{e.preventDefault();zone.classList.remove("over"
 window.addEventListener("dragover",e=>e.preventDefault());window.addEventListener("drop",e=>e.preventDefault());
 listen("save-state","click",save);
 listen("project-select","change",e=>openProject(e.target.value));
+const manageButton=document.createElement('button');manageButton.id='manage-projects';manageButton.textContent='จัดการงาน';$('rename-project').after(manageButton);
+manageButton.onclick=()=>safe(async()=>{
+ if(busy||blocked||importActive)return;await save();
+ const dialog=document.createElement('dialog');dialog.className='project-manager';
+ const title=document.createElement('h2');title.textContent='จัดการงาน';const list=document.createElement('select');list.setAttribute('aria-label','เลือกงานที่จะจัดการ');
+ for(const item of await store.all('projects'))list.add(new Option(item.name,item.id));list.value=p.id;
+ const details=document.createElement('p');const info=async()=>{const item=await store.get('projects',list.value);details.textContent=item?item.layers.length+' แผ่น · '+(item.rfis||[]).length+' RFI':'';};list.onchange=()=>safe(info);
+ const actions=document.createElement('div');actions.className='dialog-actions';
+ const action=(name,fn)=>{const b=document.createElement('button');b.textContent=name;b.onclick=()=>safe(async()=>{b.disabled=true;try{await fn();}finally{b.disabled=false;}});actions.append(b);};
+ const activate=async()=>{await openProject(list.value);dialog.close();};
+ action('เปิดงาน',activate);action('เปลี่ยนชื่อ',async()=>{await activate();projectDialog(true);});action('สำรองงาน',async()=>{await activate();$('backup-project').click();});
+ action('ลบงาน',async()=>{const item=await store.get('projects',list.value);if(!item)return;
+ if(!await confirm('ลบงาน '+item.name,'จะลบแบบ Cloud และ RFI ทั้งหมดของงานนี้ ย้อนกลับด้วย Undo ไม่ได้ ควรสำรองงานก่อน ต้องการลบหรือไม่?'))return;
+ await save();const latest=await store.get('projects',item.id);if(latest.revision!==item.revision)throw Error('งานมีการเปลี่ยนแปลง กรุณาเปิดจัดการงานใหม่');
+ setBusy(true);try{await store.deleteProject(item.id,item.revision);if(p.id===item.id){clearTimeout(saveTimer);await openProject(await store.get('settings','last-project'),{skipSave:true});}else await projects();dialog.close();toast('ลบงาน '+item.name+' แล้ว');}finally{setBusy(false);}
+ });action('ปิด',()=>dialog.close());dialog.append(title,list,details,actions);dialog.onclose=()=>dialog.remove();document.body.append(dialog);await info();dialog.showModal();
+});
 function projectDialog(rename){
   renaming=rename;$("project-dialog-title").textContent=rename?"เปลี่ยนชื่องาน":"สร้างงานใหม่";
   $("project-title-input").value=rename?p.name:"";$("project-dialog").showModal();$("project-title-input").focus();
@@ -467,7 +492,13 @@ function toggleCalibratePanel(open){document.body.classList.toggle("calibrate-op
 listen("calibrate-launcher","click",()=>toggleCalibratePanel(!document.body.classList.contains("calibrate-open")));
 listen("calibrate-panel-close","click",()=>{toggleCalibratePanel(false);$("calibrate-launcher").focus();});
 
-installRfi({engine,getProject:()=>p,mutate,schedule,toast});
+installRfi({engine,getProject:()=>p,mutate,schedule,toast,navigate:item=>{
+ if(p.calibration){toast('จบ Calibrate ก่อนเปิดตำแหน่ง RFI',true);return false;}
+ const sheet=p.layers.find(l=>l.id===item.sheetId),r=item.rect;if(!sheet||!r||!Number.isFinite(r.w)||!Number.isFinite(r.h)||r.w<=0||r.h<=0){toast('ไม่พบแผ่นหรือตำแหน่ง Cloud ของรายการนี้',true);return false;}
+ document.querySelector('[data-workspace-view="canvas"]')?.click();sheet.visible=true;p.selectedId=sheet.id;p.panMode=false;
+ const available=Math.max(160,engine.width-390),height=Math.max(100,engine.height);const zoom=Math.max(.02,Math.min(8,available/(r.w*1.4),height/(r.h*1.4)));
+ p.camera={zoom,x:available/2-(r.x+r.w/2)*zoom,y:height/2-(r.y+r.h/2)*zoom};update();engine.render();schedule();return true;
+}});
 installMeasurements({engine,getProject:()=>p,mutate,toast,getSource:async l=>pool.get(l.sourceId)||(await store.get('assets',l.sourceId))?.blob});
 installAppMenus();
 

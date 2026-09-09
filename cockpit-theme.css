@@ -90,3 +90,5 @@ body:not(.register-view):not(.hide-left) .workspace{grid-template-columns:minmax
 #rfi-register-content .rfi-table-wrap{flex:1;min-height:0;overflow:auto;max-height:none}#rfi-register-content table{font-size:11px;min-width:650px}
 #rfi-register-content th{position:sticky;top:0;background:var(--panel);z-index:1}#rfi-register-content th,#rfi-register-content td{padding:6px}
 #rfi-register-content textarea{min-height:48px;height:48px}#rfi-register-content td:first-child{min-width:155px}
+
+.project-manager{width:min(620px,90vw)}.project-manager select{width:100%}.project-manager .dialog-actions{flex-wrap:wrap}

@@ -38,6 +38,20 @@ export class Store {
     try{await done(tx);}catch(error){if(conflict)throw new ConflictError("งานนี้ถูกแก้จากอีกแท็บ");throw error;}
     return {revision:record.revision,savedAt:record.savedAt};
   }
+  async deleteProject(id,revision) {
+    const tx=this.db.transaction(['projects','assets','settings'],'readwrite');let conflict=false;
+    const request=tx.objectStore('projects').get(id);
+    request.onsuccess=()=>{if(!request.result||request.result.revision!==revision){conflict=true;tx.abort();return;}
+      tx.objectStore('projects').delete(id);
+      const all=tx.objectStore('projects').getAll();all.onsuccess=()=>{
+        const keep=new Set(all.result.flatMap(item=>[...referenced(item)]));
+        const cursor=tx.objectStore('assets').openCursor();cursor.onsuccess=()=>{const row=cursor.result;if(!row)return;if(!keep.has(row.key))row.delete();row.continue();};
+        if(!all.result.length){const fresh=project('งานใหม่');tx.objectStore('projects').put(fresh);all.result.push(fresh);}
+        tx.objectStore('settings').put(all.result[0].id,'last-project');
+      };
+    };
+    try{await done(tx);}catch(e){if(conflict)throw new ConflictError('งานเปลี่ยนแปลงจากอีกแท็บ กรุณาเปิดรายการใหม่ก่อนลบ');throw e;}
+  }
   async migrate() {
     // Read legacy records without mutating them. The marker and migrated project commit atomically.
     if(await this.get("settings","legacy-migrated"))return;
