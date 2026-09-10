@@ -5,13 +5,14 @@ export function differencePixels(oldData,newData,threshold=35){
  return {data:out,added,removed};
 }
 export function installRevisionDiff({engine,getProject,toast}){
- const button=document.createElement('button');button.textContent='ตรวจจุดต่าง';document.getElementById('rfi-cloud').before(button);
+ const button=document.createElement('button');button.textContent='ตรวจจุดต่าง';button.id='revision-diff-open';document.getElementById('rfi-cloud').before(button);
  let armed=false,start=null,project=null,pointerId=null;
  const selection=document.createElement('div');selection.className='diff-selection';selection.hidden=true;selection.setAttribute('aria-hidden','true');selection.style.cssText='position:absolute;pointer-events:none;z-index:20;border:2px dashed #eab308;background:rgba(250,204,21,.12);box-sizing:border-box';engine.canvas.parentElement.append(selection);
  const point=e=>{const q=engine.screen(e);return {x:Math.max(0,Math.min(engine.width,q.x)),y:Math.max(0,Math.min(engine.height,q.y))};};
  const paint=q=>{selection.hidden=false;Object.assign(selection.style,{left:Math.min(start.x,q.x)/engine.width*100+'%',top:Math.min(start.y,q.y)/engine.height*100+'%',width:Math.abs(start.x-q.x)/engine.width*100+'%',height:Math.abs(start.y-q.y)/engine.height*100+'%'});};
- button.onclick=()=>{const p=getProject();if(!p||p.calibration||p.selectedId===p.baseId||!p.layers.find(l=>l.id===p.selectedId)?.alignment)return toast('เลือกแผ่นใหม่ที่ Calibrate กับฐานแล้วก่อนตรวจ',true);project=p;armed=!armed;button.setAttribute('aria-pressed',String(armed));engine.canvas.style.cursor=armed?'crosshair':'';toast('ฐาน = แบบเก่า · แผ่นที่เลือก = แบบใหม่ · ลากพื้นที่ตรวจบนแปลน');};
+ button.onclick=()=>{const p=getProject();if(!p||p.calibration||p.selectedId===p.baseId||!p.layers.find(l=>l.id===p.selectedId)?.alignment)return toast('เลือกแผ่นใหม่ที่ Calibrate กับฐานแล้วก่อนตรวจ',true);const next=!armed;engine.tools?.activate('difference');p.panMode=false;project=p;armed=next;button.setAttribute('aria-pressed',String(armed));engine.canvas.style.cursor=armed?'crosshair':'';toast('ฐาน = แบบเก่า · แผ่นที่เลือก = แบบใหม่ · ลากพื้นที่ตรวจบนแปลน');};
  const stop=()=>{armed=false;start=null;selection.hidden=true;if(pointerId!==null&&engine.canvas.hasPointerCapture(pointerId))engine.canvas.releasePointerCapture(pointerId);pointerId=null;engine.cursor();button.setAttribute('aria-pressed','false');};
+ engine.tools?.register('difference',stop);
  window.addEventListener('keydown',e=>{if(e.key==='Escape')stop();});
  window.addEventListener('pointerdown',e=>{if(!armed||e.target!==engine.canvas||e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();start=point(e);pointerId=e.pointerId;engine.canvas.setPointerCapture(e.pointerId);paint(start);},true);
  window.addEventListener('pointermove',e=>{if(start&&e.pointerId===pointerId){e.preventDefault();e.stopImmediatePropagation();paint(point(e));}},true);

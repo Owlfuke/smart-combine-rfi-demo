@@ -1,3 +1,5 @@
+import {installDrawingBar} from './drawing-bar.mjs';
+import {installToolController} from './tool-controller.mjs';
 import {installOverlayExport} from './overlay-export.mjs';
 import {installRevisionDiff} from './revision-diff.mjs';
 import {describeCheck} from './calibration-check.mjs';
@@ -299,6 +301,7 @@ function updateView(){
   $("canvas-empty-state").hidden=!!p.layers.length;
 }
 function update(){
+  engine.tools?.sync(p ? p.id+":"+p.selectedId : null);
   engine.refreshRfi?.();
   if(document.body.classList.contains("register-view"))renderRegisterPage();
   if(!p)return;updateView();renderLayers();
@@ -357,7 +360,7 @@ listen("set-base","click",async()=>{
   await mutate("เปลี่ยนแผ่นฐานแล้ว",()=>rebase(p,l.id));engine.fit();
 });
 listen("check-tolerance","change",()=>{const l=selected(),value=Number($("check-tolerance").value);if(l&&!p.calibration)return mutate("บันทึกเกณฑ์ตรวจแล้ว",()=>l.checkTolerance=Number.isFinite(value)&&value>0?value:null);});
-listen("calibrate-button","click",()=>engine.begin("align"));listen("verify-grid","click",()=>engine.begin("check"));
+listen("calibrate-button","click",()=>{engine.tools?.activate("calibrate");engine.begin("align");});listen("verify-grid","click",()=>{engine.tools?.activate("calibrate");engine.begin("check");});
 listen("calibration-back","click",()=>engine.back());listen("calibration-cancel","click",()=>engine.cancel());
 listen("calibration-apply","click",()=>{
   const cal=p.calibration;if(!cal)return;
@@ -367,7 +370,7 @@ listen("calibration-apply","click",()=>{
   engine.apply();update();schedule();toast("บันทึกผลแล้ว",false,undoAction());
 });
 listen("marker-toggle","click",()=>{p.showMarkers=!p.showMarkers;update();});
-listen("pan-toggle","click",()=>{p.panMode=!p.panMode;update();});
+listen("pan-toggle","click",()=>{engine.tools?.activate("pan");p.panMode=!p.panMode;update();});
 listen("zoom-in","click",()=>engine.zoom(1.2));listen("zoom-out","click",()=>engine.zoom(1/1.2));listen("fit-view","click",()=>engine.fit());
 listen("undo-button","click",()=>historyMove(false));listen("redo-button","click",()=>historyMove(true));
 document.addEventListener("keydown",e=>{
@@ -501,6 +504,7 @@ function toggleCalibratePanel(open){document.body.classList.toggle("calibrate-op
 listen("calibrate-launcher","click",()=>toggleCalibratePanel(!document.body.classList.contains("calibrate-open")));
 listen("calibrate-panel-close","click",()=>{toggleCalibratePanel(false);$("calibrate-launcher").focus();});
 
+installToolController(engine,()=>p);
 installRfi({engine,getProject:()=>p,mutate,schedule,toast,navigate:item=>{
  if(p.calibration){toast('จบ Calibrate ก่อนเปิดตำแหน่ง RFI',true);return false;}
  const sheet=p.layers.find(l=>l.id===item.sheetId),r=item.rect;if(!sheet||!r||!Number.isFinite(r.w)||!Number.isFinite(r.h)||r.w<=0||r.h<=0){toast('ไม่พบแผ่นหรือตำแหน่ง Cloud ของรายการนี้',true);return false;}
@@ -512,6 +516,7 @@ installMeasurements({engine,getProject:()=>p,mutate,toast,getSource:async l=>poo
 installRevisionDiff({engine,getProject:()=>p,toast});
 installOverlayExport({engine,getProject:()=>p,toast});
 installAppMenus();
+installDrawingBar({engine,getProject:()=>p});
 
 listen("restore-project","click",()=>{if(!busy&&!blocked&&!importActive)$("restore-file").click();});
 listen("restore-file","change",async()=>{

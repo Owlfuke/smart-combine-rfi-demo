@@ -92,3 +92,5 @@ body:not(.register-view):not(.hide-left) .workspace{grid-template-columns:minmax
 #rfi-register-content textarea{min-height:48px;height:48px}#rfi-register-content td:first-child{min-width:155px}
 
 .project-manager{width:min(620px,90vw)}.project-manager select{width:100%}.project-manager .dialog-actions{flex-wrap:wrap}
+
+#drawing-tool-bar{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);z-index:25;display:flex;gap:4px;max-width:calc(100% - 24px);padding:5px;background:var(--panel);border:1px solid var(--border);border-radius:10px;box-shadow:0 5px 20px #0005;pointer-events:auto}#drawing-tool-items{display:flex;gap:4px;align-items:stretch;overflow-x:auto;min-width:0}#drawing-tool-items[hidden]{display:none}#drawing-tool-bar button{flex:none;font-size:11px;min-height:46px;white-space:nowrap;padding:5px 10px}#drawing-tool-items button>span{display:block}#drawing-tool-items button>span:first-child{font-size:18px}#drawing-tool-bar [aria-pressed=true]{background:#244d7e;border-color:#60a5fa;color:#fff}#drawing-tools-fold{min-width:30px}body.hide-tools #drawing-tool-bar{display:none}

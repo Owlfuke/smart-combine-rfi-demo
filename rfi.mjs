@@ -1,3 +1,5 @@
+import {captureReferencePlan,appendReferencePlan} from './rfi-reference-plan.mjs';
+import {renderKeyPlan} from './rfi-keyplan.mjs';
 import {captureState,imageState} from './rfi-image-state.mjs';
 import {installRegister} from './rfi-register.mjs';
 import {renderRfiCrop} from "./rfi-render.mjs";
@@ -33,7 +35,8 @@ export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
  engine.clearCloudSelection=()=>{selectedCloud=null;};
  engine.deleteSelectedCloud=()=>{const item=chosen();if(!selectedCloud||item?.id!==selectedCloud||item.sheetId!==getProject()?.selectedId)return false;$('rfi-delete').click();selectedCloud=null;return true;};
  const stop=()=>{armed=false;drag=null;editing=null;$('rfi-resize-actions').hidden=true;$('rfi-cloud').setAttribute('aria-pressed','false');engine.cursor();engine.render();};
- $('rfi-cloud').onclick=()=>{const p=getProject();if(!p?.layers.length||p.calibration)return;armed=!armed;$('rfi-cloud').setAttribute('aria-pressed',String(armed));canvas.style.cursor=armed?'crosshair':'default';};
+ engine.tools?.register('cloud',()=>{selectedCloud=null;const id=drag?.id;stop();if(id!==undefined&&canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);});
+ $('rfi-cloud').onclick=()=>{const p=getProject();if(!p?.layers.length||p.calibration)return;const next=!armed;engine.tools?.activate('cloud');p.panMode=false;armed=next;$('rfi-cloud').setAttribute('aria-pressed',String(armed));canvas.style.cursor=armed?'crosshair':'default';};
  function enlargePreview(){const item=chosen();if(!item?.image)return;const dialog=document.createElement('dialog');dialog.className='rfi-image-dialog';dialog.setAttribute('aria-label','ตรวจภาพ RFI และหัวกริด');const heading=document.createElement('h2');heading.textContent='ภาพ RFI · ตรวจหัวกริด';const img=document.createElement('img');img.src=item.image;img.alt='ภาพเดียวกับที่แนบใน PDF';const close=document.createElement('button');close.textContent='ปิด';close.onclick=()=>dialog.close();dialog.append(heading,img,close);dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal();}
  $('rfi-preview').onclick=enlargePreview;
  $('rfi-preview').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();enlargePreview();}};
@@ -48,10 +51,10 @@ export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
  $('rfi-grid').oninput=()=>{const item=chosen();if(item){item.gridLine=$('rfi-grid').value;schedule();}};
  $('rfi-grid').addEventListener('blur',()=>registerDock.refresh());$('rfi-question').addEventListener('blur',()=>registerDock.refresh());
  $('rfi-question').oninput=()=>{const item=chosen();if(item){item.question=$('rfi-question').value;schedule();}};
- $('rfi-download').onclick=async()=>{const item=chosen();if(!item)return;checkImage();if(imageState(getProject(),item,engine)!=='current'&&!window.confirm('ภาพแนบอาจไม่ตรงกับแบบปัจจุบัน ต้องการส่ง PDF โดยใช้ภาพเดิมหรือไม่?'))return;if(!item.gridLine?.trim()){toast('กรุณาระบุขอบเขต Grid line เช่น Gl.A-B/1-2',true);$('rfi-grid').focus();return;}if(item.gridImageWarning&&!item.gridImageSource){toast('ยังแนบภาพหัวกริดไม่สำเร็จ: '+item.gridImageWarning,true);return;}const button=$('rfi-download');button.disabled=true;try{await exportRfi(item);}catch(e){toast(e.message,true);}finally{button.disabled=false;}};
+ $('rfi-download').onclick=async()=>{const item=chosen();if(!item)return;if(!item.referencePlan){toast('กรุณากดอัปเดตภาพจากแบบปัจจุบัน เพื่อแนบแปลนอ้างอิงพร้อม Cloud',true);return;}checkImage();if(imageState(getProject(),item,engine)!=='current'&&!window.confirm('ภาพแนบอาจไม่ตรงกับแบบปัจจุบัน ต้องการส่ง PDF โดยใช้ภาพเดิมหรือไม่?'))return;if(!item.gridLine?.trim()){toast('กรุณาระบุขอบเขต Grid line เช่น Gl.A-B/1-2',true);$('rfi-grid').focus();return;}if(item.gridImageWarning&&!item.gridImageSource){toast('ยังแนบภาพหัวกริดไม่สำเร็จ: '+item.gridImageWarning,true);return;}const button=$('rfi-download');button.disabled=true;try{await exportRfi(item);}catch(e){toast(e.message,true);}finally{button.disabled=false;}};
 
  function screenRect(r){const c=getProject().camera;return {x:r.x*c.zoom+c.x,y:r.y*c.zoom+c.y,w:r.w*c.zoom,h:r.h*c.zoom};}
- $('rfi-resize').onclick=()=>{const item=chosen(),p=getProject();if(!item||p.calibration)return;if(item.sheetId!==p.selectedId){toast('เลือกแผ่นของวงนี้ในรายการแบบก่อน',true);return;}stop();editing={id:item.id,project:p,rect:{...item.rect}};$('rfi-resize-actions').hidden=false;toast('ลากมุมสีน้ำเงิน แล้วกดบันทึกขนาด · ภาพจะอัปเดตตาม Layer ที่แสดงตอนนี้');engine.render();};
+ $('rfi-resize').onclick=()=>{const item=chosen(),p=getProject();if(!item||p.calibration)return;if(item.sheetId!==p.selectedId){toast('เลือกแผ่นของวงนี้ในรายการแบบก่อน',true);return;}engine.tools?.activate("cloud-resize");p.panMode=false;stop();editing={id:item.id,project:p,rect:{...item.rect}};$('rfi-resize-actions').hidden=false;toast('ลากมุมสีน้ำเงิน แล้วกดบันทึกขนาด · ภาพจะอัปเดตตาม Layer ที่แสดงตอนนี้');engine.render();};
  $('rfi-resize-cancel').onclick=()=>stop();
  $('rfi-resize-save').onclick=async()=>{if(!editing)return;const target=chosen();if(!target||editing.project!==getProject()||target.id!==editing.id)return stop();const r=screenRect(editing.rect);if(r.x<0||r.y<0||r.x+r.w>engine.width||r.y+r.h>engine.height){toast('ซูมออกให้เห็นกรอบครบก่อนบันทึก',true);return;}await commitCloud(r,target);stop();};
  const pos=e=>{const q=engine.screen(e);return {x:Math.max(0,Math.min(engine.width,q.x)),y:Math.max(0,Math.min(engine.height,q.y))};};
@@ -62,7 +65,7 @@ export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
  await commitCloud(r);},true);
  engine.createRfiFromRect=r=>commitCloud(r);
  async function commitCloud(r,target=null,dimensionOverride){const p=getProject();
- try{engine.draw();const pad=12,x=Math.max(0,r.x-pad),y=Math.max(0,r.y-pad),w=Math.min(engine.width,r.x+r.w+pad)-x,h=Math.min(engine.height,r.y+r.h+pad)-y;const rendered=renderRfiCrop(engine,{x,y,w,h},{showDimensions:dimensionOverride??target?.showDimensions??true}),crop=rendered.canvas,d=rendered.scale;const ctx=crop.getContext('2d');ctx.scale(d,d);cloud(ctx,{x:r.x-x,y:r.y-y,w:r.w,h:r.h});const l=p.layers.find(l=>l.id===p.selectedId);const world=engine.world(r);const item={id:crypto.randomUUID(),createdAt:Date.now(),sheetId:l?.id,sheetName:l?.name||'',references:rfiReferences(p,engine.comparisonMode),showDimensions:dimensionOverride??target?.showDimensions??true,gridLine:'',gridImageWarning:'',question:'',image:crop.toDataURL('image/png'),rect:{...world,w:r.w/p.camera.zoom,h:r.h/p.camera.zoom}};item.captureState=captureState(p,item,engine);item.imageUpdatedAt=Date.now();const gridLayer=p.layers.find(v=>v.id===p.baseId&&v.gridBands?.top&&v.gridBands?.side)||(l?.gridBands?.top&&l?.gridBands?.side?l:(p.layers.filter(v=>v.gridBands?.top&&v.gridBands?.side).length===1?p.layers.find(v=>v.gridBands?.top&&v.gridBands?.side):null));if(gridLayer){try{const framed=frameWithGrid(crop,gridLayer,engine.cache.get(gridLayer.assetId)?.source,{...engine.world({x,y}),w:w/p.camera.zoom,h:h/p.camera.zoom});item.image=framed.toDataURL('image/png');item.gridImageSource=gridLayer.name;toast("กำลังอ่านชื่อหัวกริดเฉพาะช่วง Cloud…");try{item.gridLine=dimensionOverride!==undefined?(target?.gridLine||""):(await readGridFrame(framed)||"");if(!item.gridLine)item.gridImageWarning="แนบภาพกริดแล้ว แต่อ่านชื่อกริดไม่ครบ กรุณาตรวจชื่อจากภาพ";}catch{item.gridImageWarning="แนบภาพกริดแล้ว แต่ OCR ไม่สำเร็จ กรุณาตรวจชื่อจากภาพ";}}catch(e){item.gridImageWarning="สร้าง Cloud แล้ว แต่ยังไม่แนบแถบกริด: "+e.message;}}if(target){Object.assign(item,{id:target.id,createdAt:target.createdAt,question:target.question,...(dimensionOverride!==undefined?{gridLine:target.gridLine}: {})});}const reference=p.layers.find(l=>l.id===p.baseId&&l.gridLines?.length)||l;
+ try{engine.draw();const pad=12,x=Math.max(0,r.x-pad),y=Math.max(0,r.y-pad),w=Math.min(engine.width,r.x+r.w+pad)-x,h=Math.min(engine.height,r.y+r.h+pad)-y;const rendered=renderRfiCrop(engine,{x,y,w,h},{showDimensions:dimensionOverride??target?.showDimensions??true}),crop=rendered.canvas,d=rendered.scale;const ctx=crop.getContext('2d');ctx.scale(d,d);cloud(ctx,{x:r.x-x,y:r.y-y,w:r.w,h:r.h});const l=p.layers.find(l=>l.id===p.selectedId);const world=engine.world(r);const item={id:crypto.randomUUID(),createdAt:Date.now(),sheetId:l?.id,sheetName:l?.name||'',references:rfiReferences(p,engine.comparisonMode),showDimensions:dimensionOverride??target?.showDimensions??true,gridLine:'',gridImageWarning:'',question:'',image:crop.toDataURL('image/png'),rect:{...world,w:r.w/p.camera.zoom,h:r.h/p.camera.zoom}};item.referencePlan=captureReferencePlan(engine,item,cloud);item.keyPlan=renderKeyPlan(engine,item);if(item.keyPlanWarning)toast(item.keyPlanWarning);item.captureState=captureState(p,item,engine);item.imageUpdatedAt=Date.now();const gridLayer=p.layers.find(v=>v.id===p.baseId&&v.gridBands?.top&&v.gridBands?.side)||(l?.gridBands?.top&&l?.gridBands?.side?l:(p.layers.filter(v=>v.gridBands?.top&&v.gridBands?.side).length===1?p.layers.find(v=>v.gridBands?.top&&v.gridBands?.side):null));if(gridLayer){try{const framed=frameWithGrid(crop,gridLayer,engine.cache.get(gridLayer.assetId)?.source,{...engine.world({x,y}),w:w/p.camera.zoom,h:h/p.camera.zoom});item.image=framed.toDataURL('image/png');item.gridImageSource=gridLayer.name;toast("กำลังอ่านชื่อหัวกริดเฉพาะช่วง Cloud…");try{item.gridLine=dimensionOverride!==undefined?(target?.gridLine||""):(await readGridFrame(framed)||"");if(!item.gridLine)item.gridImageWarning="แนบภาพกริดแล้ว แต่อ่านชื่อกริดไม่ครบ กรุณาตรวจชื่อจากภาพ";}catch{item.gridImageWarning="แนบภาพกริดแล้ว แต่ OCR ไม่สำเร็จ กรุณาตรวจชื่อจากภาพ";}}catch(e){item.gridImageWarning="สร้าง Cloud แล้ว แต่ยังไม่แนบแถบกริด: "+e.message;}}if(target){Object.assign(item,{id:target.id,createdAt:target.createdAt,question:target.question,...(dimensionOverride!==undefined?{gridLine:target.gridLine}: {})});}const reference=p.layers.find(l=>l.id===p.baseId&&l.gridLines?.length)||l;
 const suggested=dimensionOverride===undefined&&!gridLayer&&reference?.gridLines?.length?gridBounds(reference,item.rect):null;
 if(suggested){item.gridLine=suggested;item.gridSource=reference.name;}else if(dimensionOverride===undefined&&!gridLayer&&reference?.gridLines?.length){item.gridLine='';item.gridSource=reference.name;toast('กริดไม่คร่อม Cloud หรือแนวเส้นไม่ขนาน กรุณาตรวจขอบเขตกริด',true);}
 if(getProject()!==p)return;await mutate(target?'ปรับขนาดเมฆแล้ว':'',()=>{if(target)Object.assign(target,item);else (p.rfis??=[]).push(item);});refresh();$('rfi-list').value=item.id;show(item);}catch(e){toast(e.message,true);}}
@@ -73,23 +76,30 @@ if(getProject()!==p)return;await mutate(target?'ปรับขนาดเม�
 }
 export async function exportRfi(item){
  await document.fonts.ready;
- const {jsPDF}=window.jspdf;if(!jsPDF)throw Error('ไม่พบ jsPDF ในโปรแกรม');const pdf=new jsPDF({unit:'mm',format:'a4'});
- // Browser text shaping keeps Thai combining marks intact. Text is rasterized at print resolution.
- const width=1440,scale=180/width;let c,ctx,y,separators=[];
- function page(){separators=[];c=document.createElement('canvas');c.width=width*2;c.height=2136*2;ctx=c.getContext('2d');ctx.scale(2,2);ctx.fillStyle='white';ctx.fillRect(0,0,c.width,c.height);ctx.fillStyle='#111827';ctx.font='bold 25px Arial';ctx.fillText('REQUEST FOR INFORMATION (RFI) - RITTA PROJECT',0,40);y=95;ctx.font='24px Tahoma, sans-serif';}
- function flush(){pdf.addImage(c.toDataURL('image/png'),'PNG',15,15,180,2136*scale);pdf.setDrawColor(0,0,0);pdf.setLineWidth(.6);pdf.rect(5,5,200,287);for(const position of separators)pdf.line(5,15+position*scale,205,15+position*scale);}
- function line(text){if(y>1900){flush();pdf.addPage();page();}ctx.fillText(text,0,y);y+=38;}
- function paragraph(text){for(const raw of text.split('\n')){let row='';for(const ch of raw){if(ctx.measureText(row+ch).width>width-20){line(row);row='';}row+=ch;}line(row);}}
- page();paragraph('วันที่: '+new Date().toLocaleDateString('th-TH'));paragraph('แผ่นแบบอ้างอิง / Layer:');
- for(const ref of item.references||[{name:item.sheetName,color:null}]){if(y>1820){flush();pdf.addPage();page();}ctx.fillStyle=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';ctx.fillRect(0,y-22,22,22);ctx.fillStyle='#111827';paragraph('     '+ref.name);}
- if(!item.references)paragraph('รายการเดิม: ไม่มีข้อมูล Layer ทั้งหมด ณ เวลาครอป');
- const img=new Image();img.src=item.image;await img.decode();const ratio=Math.min(width/img.width,720/img.height);const iw=img.width*ratio,ih=img.height*ratio;if(y+ih+65>1850){flush();pdf.addPage();page();}ctx.drawImage(img,(width-iw)/2,y+10,iw,ih);y+=ih+65;separators.push(y-45);paragraph('ขอบเขต Grid line: '+item.gridLine.trim());if(item.gridSource)paragraph('อ้างอิงกริด: '+item.gridSource);paragraph('คำถาม / รายละเอียด:');paragraph(item.question||'—');
- // Reserve a writable response area and anchor approval fields at the page foot.
- if(y>1650){flush();pdf.addPage();page();}
- const divider=Math.max(y+28,1560);
- separators.push(divider,2000);ctx.save();
- ctx.fillStyle='#000000';ctx.font='bold 28px Tahoma, sans-serif';ctx.fillText('คำตอบ',0,divider+48);ctx.restore();
- ctx.fillText('ผู้อนุมัติ: ____________________________________',0,2050);
- ctx.fillText('วันที่อนุมัติ: _________________________________',0,2090);
- flush();pdf.save('RFI-'+new Date(item.createdAt).toISOString().replace(/[:.]/g,'-')+'.pdf');
+ const {jsPDF}=window.jspdf||{};if(!jsPDF)throw Error('ไม่พบ jsPDF ในโปรแกรม');
+ const pdf=new jsPDF({unit:'mm',format:'a4'}),width=1440,height=2160;
+ let c,ctx,y,separators=[];
+ const font='24px Tahoma, sans-serif';
+ function page(){separators=[];c=document.createElement('canvas');c.width=width*2;c.height=height*2;ctx=c.getContext('2d');ctx.scale(2,2);ctx.fillStyle='white';ctx.fillRect(0,0,width,height);ctx.fillStyle='#000';ctx.font=font;}
+ function flush(){pdf.addImage(c.toDataURL('image/png'),'PNG',15,10,180,270);pdf.setDrawColor(0);pdf.setLineWidth(.45);pdf.rect(5,5,200,287);for(const v of separators)pdf.line(5,10+v*.125,205,10+v*.125);}
+ function rule(v){separators.push(v);ctx.save();ctx.strokeStyle='#000';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,v);ctx.lineTo(width,v);ctx.stroke();ctx.restore();}
+ function wrap(text,maxWidth){const rows=[];for(const raw of String(text||'').split('\n')){let row='';for(const ch of raw){if(ctx.measureText(row+ch).width>maxWidth){rows.push(row);row='';}row+=ch;}rows.push(row);}return rows;}
+ function lines(text,maxWidth=width){for(const row of wrap(text,maxWidth)){if(y>2140){flush();pdf.addPage();page();y=50;}ctx.fillText(row,0,y);y+=34;}}
+ page();ctx.font='bold 25px Arial';ctx.fillText('REQUEST FOR INFORMATION (RFI) - RITTA PROJECT',0,40);ctx.font=font;y=92;
+ lines('วันที่: '+new Date().toLocaleDateString('th-TH'),1000);lines('แผ่นแบบอ้างอิง / Layer:',1000);
+ for(const ref of item.references||[{name:item.sheetName}]){ctx.fillStyle=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';ctx.fillRect(0,y-20,22,22);ctx.fillStyle='#000';lines('     '+ref.name,1000);}
+ if(item.keyPlan){const key=new Image();key.src=item.keyPlan;await key.decode();const s=Math.min(300/key.width,210/key.height);ctx.drawImage(key,1130+(300-key.width*s)/2,10,key.width*s,key.height*s);ctx.save();ctx.font='20px Arial';ctx.textAlign='center';ctx.fillText('KEY PLAN',1280,245);ctx.restore();}
+ else{ctx.save();ctx.font='20px Tahoma';ctx.fillText('ยังไม่มี Key Plan',1130,70);ctx.fillText('กรุณาอัปเดตภาพ RFI',1130,102);ctx.restore();}
+ const img=new Image();img.src=item.image;await img.decode();
+ // Overflowing reference lists continue before the fixed drawing / response layout.
+ if(y>420){flush();pdf.addPage();page();y=40;}
+ const top=Math.max(275,y+24),bottom=1330,ratio=Math.min(width/img.width,Math.max(1,bottom-top)/img.height);
+ ctx.drawImage(img,(width-img.width*ratio)/2,top,img.width*ratio,img.height*ratio);rule(1360);y=1404;
+ const question=[...wrap('ขอบเขต Grid line: '+(item.gridLine||''),width),...(item.gridSource?wrap('อ้างอิงกริด: '+item.gridSource,width):[]),...wrap('คำถาม / รายละเอียด:',width),...wrap(item.question||'—',width)];
+ const answer=wrap(item.answer||'',width);
+ function section(rows,start,end,title){y=start;for(const row of rows){if(y>end){flush();pdf.addPage();page();y=50;lines(title); }ctx.fillText(row,0,y);y+=34;}}
+ section(question,1404,1670,'คำถาม / รายละเอียด (ต่อ)');
+ const divider=Math.max(1710,y+15);if(divider>1750){flush();pdf.addPage();page();y=50;}else{rule(1710);y=1754;}
+ ctx.font=font;lines('คำตอบ');section(answer,y,1990,'คำตอบ (ต่อ)');rule(2030);y=2074;lines('ผู้อนุมัติ: ____________________________________');lines('วันที่อนุมัติ: _________________________________');
+ flush();if(item.referencePlan)await appendReferencePlan(pdf,item.referencePlan);pdf.save('RFI-'+new Date(item.createdAt).toISOString().replace(/[:.]/g,'-')+'.pdf');
 }

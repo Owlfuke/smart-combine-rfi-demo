@@ -49,7 +49,7 @@ export class Engine {
     if(this.guideFrame)return;
     this.guideFrame=requestAnimationFrame(()=>{this.guideFrame=0;try{this.drawGuide();}catch(e){this.error(e);}});
   }
-  cursor(){this.canvas.style.cursor=this.drag?"grabbing":this.p?.calibration&&this.stage()!=="review"?"none":this.p?.panMode?"grab":"default";}
+  cursor(){this.canvas.style.cursor=this.drag?"grabbing":this.p?.calibration&&this.stage()!=="review"?"none":this.p?.panMode?"grab":["scale","distance","arrow"].includes(this.measureMode)?"crosshair":"default";}
   resize(){
     const r=this.canvas.parentElement.getBoundingClientRect();
     if(r.width<2||r.height<2)return;
