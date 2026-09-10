@@ -1,3 +1,4 @@
+import {checkOffset} from './calibration-check.mjs';
 import {map,similarity,identity} from "./model.mjs";
 export class Engine {
   constructor(canvas,guide,{change,status,error}){
@@ -117,9 +118,7 @@ export class Engine {
   result(){
     const c=this.p.calibration;if(!c||this.stage()!=="review")return null;
     if(c.mode==="align")return similarity(...c.p,...c.q);
-    const l=this.p.layers.find(l=>l.id===c.layerId),mapped=map(l.transform,c.q[0]);
-    const errorPx=Math.hypot(mapped.x-c.p[0].x,mapped.y-c.p[0].y);
-    return {errorPx,relative:errorPx/Math.hypot(l.alignment.p[1].x-l.alignment.p[0].x,l.alignment.p[1].y-l.alignment.p[0].y)*100};
+    const l=this.p.layers.find(l=>l.id===c.layerId);return checkOffset(l,c.p[0],c.q[0]);
   }
   apply(){
     const c=this.p.calibration,l=this.p.layers.find(l=>l.id===c.layerId),r=this.result();

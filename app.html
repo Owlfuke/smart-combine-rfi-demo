@@ -66,9 +66,9 @@
       <div class="tool-group"><button id="calibration-back">ย้อนหนึ่งจุด</button><button id="calibration-cancel">ยกเลิก</button></div>
       <div id="calibration-result" class="result" hidden></div>
       <button id="calibration-apply" class="primary" hidden>ยืนยันผลจับคู่</button>
-      <button id="verify-grid">ตรวจจุดที่สาม</button>
+      <button id="verify-grid">ตรวจจุดอิสระหลัง Calibrate</button><p class="hint">เลือกจุดกริดเดียวกันบนสองแผ่น ใช้จุดที่ไม่ใช่ P1/P2 และอยู่ห่างจากคู่จับเดิม เพื่อตรวจความเหลื่อมอีกบริเวณ</p><label>เกณฑ์คลาดเคลื่อนที่ยอมรับ (px แผ่นฐาน)<input id="check-tolerance" type="number" min="0.01" step="0.1" placeholder="กำหนดตามงาน เช่น 2"></label>
       <p id="verification-result" class="hint">ยังไม่ได้ตรวจจุดอิสระ</p>
-      <p class="hint">ค่าคลาดเคลื่อนเป็น px ของแผ่นฐาน ไม่ใช่ระยะจริง และไม่ยืนยันความถูกต้องทั้งแผ่น</p>
+      <p class="hint">X บวก = แผ่นซ้อนเหลื่อมไปขวา · Y บวก = เหลื่อมลง ค่านี้ไม่เปลี่ยนตามการซูม เป็น px ของแผ่นฐาน ไม่ใช่ mm เกณฑ์นี้กำหนดโดยผู้ใช้ ไม่ใช่มาตรฐานรับรอง ผลตรวจจุดเดียวไม่ยืนยันทั้งแผ่น และการตรวจไม่ขยับแบบให้อัตโนมัติ</p>
     </section>
     <details class="future-section"><summary>ข้อมูล RFI เดิม · ใช้งานขั้นถัดไป</summary><label>ชื่อโครงการ<input id="project-name"></label><label>เลขที่ RFI<input id="rfi-number"></label><label>คำถามวิศวกรรม<textarea id="engineering-question"></textarea></label><p class="hint">Annotation และ Export จะพัฒนาในข้อ 6–8</p></details>
   </div>

@@ -1,3 +1,6 @@
+import {installOverlayExport} from './overlay-export.mjs';
+import {installRevisionDiff} from './revision-diff.mjs';
+import {describeCheck} from './calibration-check.mjs';
 import {installAppMenus} from './app-menus.mjs';
 import {installMeasurements} from './measurements.mjs';
 import {assertNewRevisions} from './versions.mjs';
@@ -43,18 +46,22 @@ function status(message){$("canvas-status").textContent=message;}
 function savedText(){
   $("save-status").textContent=p?.savedAt?"บันทึก "+new Date(p.savedAt).toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit",second:"2-digit"}):"พร้อมบันทึกอัตโนมัติ";
 }
-let interactionUntil=0;
+let interactionUntil=0,composingText=false;
 function deferAutosave(){interactionUntil=performance.now()+1200;}
 window.addEventListener('pointermove',e=>{if(e.buttons)deferAutosave();},{passive:true});
 window.addEventListener('pointerdown',deferAutosave,{passive:true});
 window.addEventListener('wheel',deferAutosave,{passive:true});
+// Text edits remain in memory immediately; defer expensive persistence until typing pauses.
+window.addEventListener('input',()=>{interactionUntil=performance.now()+3000;},true);
+window.addEventListener('compositionstart',()=>{composingText=true;},true);
+window.addEventListener('compositionend',()=>{composingText=false;interactionUntil=performance.now()+3000;},true);
 function schedule(){
   if(p?.calibration){clearTimeout(saveTimer);$("save-status").textContent="พักบันทึกอัตโนมัติระหว่าง Calibrate · กดบันทึกเองได้";return;}
   if(!p||busy||blocked)return;
   $("save-status").textContent="มีการเปลี่ยนแปลง · รอบันทึกเมื่อหยุดใช้งาน";
   clearTimeout(saveTimer);
-  const attempt=()=>{if(!p||p.calibration||blocked)return;const remaining=interactionUntil-performance.now();if(busy||remaining>0){saveTimer=setTimeout(attempt,Math.max(300,remaining));return;}safe(save);};
-  saveTimer=setTimeout(attempt,1200);
+  const attempt=()=>{if(!p||p.calibration||blocked)return;const remaining=interactionUntil-performance.now();if(busy||composingText||remaining>0){saveTimer=setTimeout(attempt,Number.isFinite(remaining)?Math.max(300,remaining):300);return;}safe(save);};
+  saveTimer=setTimeout(attempt,3000);
 }
 async function save(){
   clearTimeout(saveTimer);
@@ -317,14 +324,15 @@ function update(){
   $("calibration-cancel").disabled=!cal;$("calibration-back").disabled=!cal||(!cal.p.length&&!cal.q.length);
   $("calibration-apply").hidden=!cal||engine.stage()!=="review";
   $("calibration-result").hidden=!cal||engine.stage()!=="review";
+  $("check-tolerance").value=l?.checkTolerance??"";$("check-tolerance").disabled=!!cal;
   const n=cal?.mode==="check"?1:2,stage=engine.stage();
   $("calibration-instruction").textContent=!cal?"เลือกแผ่นซ้อน แล้วจับคู่กริดที่ตรงกันสองคู่":stage==="review"?"ตรวจผลบน Canvas แล้วกดยืนยัน หรือย้อนจุดเพื่อแก้ไข":(stage==="base"?"แผ่นฐาน · เลือก P":"แผ่นซ้อน · เลือก Q")+(cal.mode==="check"?"3 ที่เป็นจุดตรวจอิสระ":(stage==="base"?cal.p.length+1:cal.q.length+1))+" · Esc ยกเลิก";
   [...$("calibration-steps").children].forEach((li,i)=>{const count=cal?cal.p.length+cal.q.length:0;li.className=i<count?"done":i===count&&cal?"active":"";li.hidden=cal?.mode==="check";});
   if(cal&&stage==="review"){
     const r=engine.result();$("calibration-apply").textContent=cal.mode==="check"?"บันทึกผลตรวจ":"ยืนยันผลจับคู่";
-    $("calibration-result").textContent=cal.mode==="check"?"คลาดเคลื่อน "+r.errorPx.toFixed(2)+" px ("+r.relative.toFixed(3)+"% ของระยะกริด)": "Scale "+r.scale.toFixed(5)+" · หมุน "+(r.angle*180/Math.PI).toFixed(3)+"°"+(r.warning?" · "+r.warning:"");
+    $("calibration-result").textContent=cal.mode==="check"?describeCheck(r,Number($("check-tolerance").value)): "Scale "+r.scale.toFixed(5)+" · หมุน "+(r.angle*180/Math.PI).toFixed(3)+"°"+(r.warning?" · "+r.warning:"");
   }
-  $("verification-result").textContent=l?.check?"จุดตรวจอิสระ: "+l.check.errorPx.toFixed(2)+" px · "+l.check.relative.toFixed(3)+"% ของระยะกริด":"ยังไม่ได้ตรวจจุดอิสระ";
+  $("verification-result").textContent=l?.check?describeCheck(l.check,Number($("check-tolerance").value)):"ยังไม่ได้ตรวจจุดอิสระ";
   $("calibration-status").textContent=l?.alignment?"จับคู่แล้ว"+(l.check?" · ตรวจจุดที่สามแล้ว":" · ยังไม่ตรวจจุดที่สาม"):"ยังไม่จับคู่กริด";
   $("blend-hint").textContent=["screen","lighten","color-dodge"].includes(l?.blend)?"โหมดเพิ่มแสงอาจทำให้เส้นจางบนพื้นขาว":"ปรับสีและ Opacity ของแผ่นที่เลือก ไม่เปลี่ยนผลจับคู่";
   for(const id of ["project-name","rfi-number","engineering-question"])if(document.activeElement!==$(id))$(id).value=p.form[id]||"";
@@ -348,6 +356,7 @@ listen("set-base","click",async()=>{
   if(p.baseId&&!(await confirm("เปลี่ยนแผ่นฐาน","จะรักษาตำแหน่งซ้อนสัมพัทธ์ไว้ แต่ล้างจุดอ้างอิงและผลตรวจของทุกแผ่น เพราะเปลี่ยนระบบพิกัด ย้อนกลับด้วย Undo ได้")))return;
   await mutate("เปลี่ยนแผ่นฐานแล้ว",()=>rebase(p,l.id));engine.fit();
 });
+listen("check-tolerance","change",()=>{const l=selected(),value=Number($("check-tolerance").value);if(l&&!p.calibration)return mutate("บันทึกเกณฑ์ตรวจแล้ว",()=>l.checkTolerance=Number.isFinite(value)&&value>0?value:null);});
 listen("calibrate-button","click",()=>engine.begin("align"));listen("verify-grid","click",()=>engine.begin("check"));
 listen("calibration-back","click",()=>engine.back());listen("calibration-cancel","click",()=>engine.cancel());
 listen("calibration-apply","click",()=>{
@@ -500,6 +509,8 @@ installRfi({engine,getProject:()=>p,mutate,schedule,toast,navigate:item=>{
  p.camera={zoom,x:available/2-(r.x+r.w/2)*zoom,y:height/2-(r.y+r.h/2)*zoom};update();engine.render();schedule();return true;
 }});
 installMeasurements({engine,getProject:()=>p,mutate,toast,getSource:async l=>pool.get(l.sourceId)||(await store.get('assets',l.sourceId))?.blob});
+installRevisionDiff({engine,getProject:()=>p,toast});
+installOverlayExport({engine,getProject:()=>p,toast});
 installAppMenus();
 
 listen("restore-project","click",()=>{if(!busy&&!blocked&&!importActive)$("restore-file").click();});
