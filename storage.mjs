@@ -1,3 +1,4 @@
+import {packAttachments} from './rfi-assets.mjs';
 import {project,layer,identity,referenced,validate} from "./model.mjs";
 export class ConflictError extends Error {}
 const done = tx => new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error||Error("ยกเลิกการบันทึก"));tx.onerror=()=>{};});
@@ -23,7 +24,7 @@ export class Store {
   }
   async setting(key,value){const tx=this.db.transaction("settings","readwrite");tx.objectStore("settings").put(value,key);await done(tx);}
   async save(p,assets) {
-    const record=structuredClone(p),expected=record.revision,ids=referenced(record);
+    const record=packAttachments(structuredClone(p),assets),expected=record.revision,ids=referenced(record);
     record.revision++;record.savedAt=Date.now();
     const tx=this.db.transaction(["projects","assets"],"readwrite");
     let conflict=false;

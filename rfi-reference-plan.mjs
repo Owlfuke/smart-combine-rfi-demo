@@ -25,5 +25,6 @@ export async function appendReferencePlan(pdf,data){
  pdf.addPage('a3',landscape?'landscape':'portrait');
  const w=landscape?420:297,h=landscape?297:420;
  const s=Math.min((w-20)/img.width,(h-20)/img.height);
- pdf.addImage(data,'PNG',(w-img.width*s)/2,(h-img.height*s)/2,img.width*s,img.height*s);
+ const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;canvas.getContext('2d').drawImage(img,0,0);
+ pdf.addImage(canvas,'PNG',(w-img.width*s)/2,(h-img.height*s)/2,img.width*s,img.height*s);
 }

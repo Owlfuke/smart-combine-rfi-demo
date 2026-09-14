@@ -1,3 +1,4 @@
+import {attachmentIds} from './rfi-assets.mjs';
 export const LIMITS = Object.freeze({fileBytes:100*1024*1024,pages:300,layers:24,pixels:64000000,pagePixels:12000000,imagePixels:24000000,history:20});
 export const BLENDS = ["source-over","multiply","screen","overlay","darken","lighten","color-dodge","color-burn","hard-light","soft-light","difference","exclusion","luminosity","hue","saturation","color"];
 export const identity = () => ({a:1,b:0,c:0,d:1,e:0,f:0});
@@ -35,7 +36,7 @@ export function undo(p,redo=false) {
   Object.assign(p,next);return true;
 }
 export function referenced(p) {
-  const ids=new Set();
+  const ids=new Set(attachmentIds(p));
   for(const item of [p,...p.history,...p.future])for(const l of item.layers){ids.add(l.assetId);if(l.sourceId)ids.add(l.sourceId);}
   return ids;
 }

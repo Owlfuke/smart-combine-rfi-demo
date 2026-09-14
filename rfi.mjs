@@ -6,6 +6,7 @@ import {renderRfiCrop} from "./rfi-render.mjs";
 import {readGridFrame} from "./grid-auto.mjs";
 import {frameWithGrid} from "./grid-frame.mjs";
 import {gridBounds} from "./grids.mjs";
+import {bindGridPrefix} from './rfi-grid-prefix.mjs';
 export function rfiReferences(p,mode){
  const compare=mode&&mode!=='normal'&&p.selectedId!==p.baseId&&p.layers.some(l=>l.id===p.baseId)&&p.layers.some(l=>l.id===p.selectedId);
  return p.layers.filter(l=>compare?(l.id===p.baseId||l.id===p.selectedId):(l.visible&&l.opacity>0)).map(l=>({id:l.id,name:l.name,number:l.number,revision:l.revision,color:compare&&mode==='overlay'?(l.id===p.baseId?'#ef4444':'#2563eb'):(!compare&&l.colorMode==='tint'?l.color:null),opacity:compare?1:l.opacity}));
@@ -20,9 +21,21 @@ export function cloud(ctx,r){
 export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
  const $=id=>document.getElementById(id),canvas=engine.canvas;let armed=false,drag=null,current=null,editing=null;
  const panel=$('rfi-panel');
+ const headingLabel=document.createElement('label');headingLabel.textContent='ชื่อท้ายหัวเอกสาร PDF';
+ const headingInput=document.createElement('input');headingInput.id='rfi-document-name';headingInput.maxLength=80;headingInput.value='RITTA';headingInput.placeholder='RITTA';headingLabel.append(headingInput);
+ const combineLabel=document.createElement('label');const combineInput=document.createElement('input');combineInput.type='checkbox';combineInput.id='rfi-include-combine';combineInput.checked=true;combineLabel.append(combineInput,document.createTextNode(' แนบแปลน Combine พร้อม Cloud'));
+ $('rfi-download').before(headingLabel,combineLabel);
+ const formFields={};
+ for(const [key,label] of [['subject','เรื่อง'],['respondent','ผู้ตอบ'],['respondentRole','ตำแหน่งผู้ตอบ'],['respondentCompany','หน่วยงานผู้ตอบ'],['responseDate','วันที่ตอบ']]){
+  const holder=document.createElement('label');holder.textContent=label;const input=document.createElement('input');input.id='rfi-'+key;input.maxLength=key==='subject'?160:80;holder.append(input);combineLabel.before(holder);formFields[key]=input;
+  input.oninput=()=>{const item=chosen();if(item){item[key]=input.value;schedule();}};
+ }
+ headingInput.oninput=()=>{const item=chosen();if(item){item.documentName=headingInput.value;schedule();}};
+ combineInput.onchange=()=>{const item=chosen();if(item){item.includeCombine=combineInput.checked;schedule();}};
+
  const imageWarning=document.createElement('p');imageWarning.id='rfi-image-state';imageWarning.setAttribute('role','status');imageWarning.style.color='#fbbf24';
  const updateImage=document.createElement('button');updateImage.textContent='อัปเดตภาพจากแบบปัจจุบัน';updateImage.id='rfi-update-image';$('rfi-preview').after(imageWarning,updateImage);
- const checkImage=()=>{const item=chosen();imageWarning.hidden=!item;updateImage.hidden=!item;if(!item)return;const state=imageState(getProject(),item,engine);imageWarning.textContent=state==='stale'?'แบบหรือการแสดงผลเปลี่ยนหลังแนบภาพ กรุณาตรวจและอัปเดตภาพก่อนส่ง':state==='unknown'?'ภาพเดิมยังไม่มีข้อมูลตรวจความเปลี่ยนแปลง กรุณาตรวจหรืออัปเดตภาพ':'ภาพตรงกับสถานะที่บันทึกไว้';};
+ const checkImage=()=>{const item=chosen();imageWarning.hidden=!item;updateImage.hidden=!item;if(!item)return;const state=imageState(getProject(),item,engine);imageWarning.textContent=item.reviewRequired|| (state==='stale'?'แบบหรือการแสดงผลเปลี่ยนหลังแนบภาพ กรุณาตรวจและอัปเดตภาพก่อนส่ง':state==='unknown'?'ภาพเดิมยังไม่มีข้อมูลตรวจความเปลี่ยนแปลง กรุณาตรวจหรืออัปเดตภาพ':'ภาพตรงกับสถานะที่บันทึกไว้');};
  updateImage.onclick=async()=>{const item=chosen();if(!item)return;if(getProject()?.calibration)return toast('จบ Calibrate ก่อนอัปเดตภาพ',true);if(navigate&&!navigate(item))return;const r=screenRect(item.rect);if(r.x<0||r.y<0||r.x+r.w>engine.width||r.y+r.h>engine.height)return toast('ซูมออกให้เห็น Cloud ครบก่อนอัปเดต',true);updateImage.disabled=true;try{await commitCloud(r,item,item.showDimensions!==false);}finally{updateImage.disabled=false;checkImage();}};
 
  const dimensionLabel=document.createElement('label');dimensionLabel.className='rfi-dimension-toggle';const dimensionToggle=document.createElement('input');dimensionToggle.type='checkbox';dimensionToggle.id='rfi-dimensions';dimensionToggle.disabled=true;dimensionLabel.append(dimensionToggle,document.createTextNode(' แสดง Dimension / ลูกศรใน RFI'));dimensionLabel.title='อัปเดตภาพจากแผ่นที่แสดงอยู่ในปัจจุบัน';$('rfi-preview').before(dimensionLabel);
@@ -42,16 +55,17 @@ export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
  $('rfi-preview').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();enlargePreview();}};
  $('rfi-close').onclick=()=>panel.hidden=true;
  function chosen(){return (getProject()?.rfis||[]).find(r=>r.id===current);}
- function show(item){dimensionToggle.disabled=false;dimensionToggle.checked=item.showDimensions!==false;stop();current=item.id;panel.hidden=false;$('rfi-preview').src=item.image;$('rfi-preview').hidden=false;$('rfi-grid-warning').textContent=item.gridImageWarning||'';$('rfi-grid-warning').hidden=!item.gridImageWarning;$('rfi-sheet').textContent=item.sheetName;$('rfi-question').value=item.question||'';$('rfi-grid').value=item.gridLine||'';const legend=$('rfi-legend');legend.replaceChildren();for(const ref of item.references||[]){const row=document.createElement('p'),swatch=document.createElement('span');swatch.textContent='■ ';swatch.style.color=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';row.append(swatch,document.createTextNode(ref.name+(ref.color?'':' (สีต้นฉบับ)')));legend.append(row);}if(!item.references)legend.textContent='รายการเดิมไม่มีข้อมูล Layer ณ เวลาครอป';$('rfi-download').disabled=false;$('rfi-delete').disabled=false;checkImage();}
+ function show(item){for(const [key,input]of Object.entries(formFields))input.value=item[key]||'';headingInput.value=item.documentName??'RITTA';combineInput.checked=item.includeCombine!==false;dimensionToggle.disabled=false;dimensionToggle.checked=item.showDimensions!==false;stop();current=item.id;panel.hidden=false;$('rfi-preview').src=item.image;$('rfi-preview').hidden=false;$('rfi-grid-warning').textContent=item.gridImageWarning||'';$('rfi-grid-warning').hidden=!item.gridImageWarning;$('rfi-sheet').textContent=item.sheetName;$('rfi-question').value=item.question||'';$('rfi-grid').value=item.gridLine||'';const legend=$('rfi-legend');legend.replaceChildren();for(const ref of item.references||[]){const row=document.createElement('p'),swatch=document.createElement('span');swatch.textContent='■ ';swatch.style.color=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';row.append(swatch,document.createTextNode(ref.name+(ref.color?'':' (สีต้นฉบับ)')));legend.append(row);}if(!item.references)legend.textContent='รายการเดิมไม่มีข้อมูล Layer ณ เวลาครอป';$('rfi-download').disabled=false;$('rfi-delete').disabled=false;checkImage();}
  $('rfi-list').onchange=()=>{const item=(getProject().rfis||[]).find(r=>r.id===$('rfi-list').value);if(item)show(item);};
  $('rfi-open').onclick=()=>{const opening=panel.hidden;refresh();panel.hidden=!opening;if(opening){const item=chosen()||(getProject()?.rfis||[])[0];if(item){show(item);$('rfi-list').value=item.id;}}};
  engine.refreshRfi=()=>refresh();
  function refresh(){checkImage();registerDock.refresh();const items=getProject()?.rfis||[];const picker=$('rfi-list');picker.replaceChildren();for(const [index,item] of items.entries())picker.add(new Option('วง '+(index+1)+' · '+item.sheetName+' · '+new Date(item.createdAt).toLocaleString('th-TH'),item.id));if(!items.some(r=>r.id===current)){current=null;$('rfi-preview').removeAttribute('src');$('rfi-preview').hidden=true;$('rfi-grid-warning').hidden=true;$('rfi-question').value='';$('rfi-grid').value='';$('rfi-legend').replaceChildren();$('rfi-sheet').textContent='วาด Revision Cloud เพื่อสร้าง RFI';$('rfi-download').disabled=true;$('rfi-delete').disabled=true;}else {picker.value=current;$('rfi-delete').disabled=false;}}
  $('rfi-delete').onclick=async()=>{const item=chosen();if(!item)return;try{await mutate('ลบวงเมฆและรายการ RFI แล้ว · Undo คืนได้',()=>{const p=getProject();p.rfis=(p.rfis||[]).filter(r=>r.id!==item.id);});refresh();const next=(getProject()?.rfis||[])[0];if(next){show(next);$('rfi-list').value=next.id;}}catch(e){toast(e.message,true);}};
- $('rfi-grid').oninput=()=>{const item=chosen();if(item){item.gridLine=$('rfi-grid').value;schedule();}};
+ const gridInput=$('rfi-grid');
+ bindGridPrefix(gridInput,()=>{const item=chosen();if(item){item.gridLine=gridInput.value;schedule();}});
  $('rfi-grid').addEventListener('blur',()=>registerDock.refresh());$('rfi-question').addEventListener('blur',()=>registerDock.refresh());
  $('rfi-question').oninput=()=>{const item=chosen();if(item){item.question=$('rfi-question').value;schedule();}};
- $('rfi-download').onclick=async()=>{const item=chosen();if(!item)return;if(!item.referencePlan){toast('กรุณากดอัปเดตภาพจากแบบปัจจุบัน เพื่อแนบแปลนอ้างอิงพร้อม Cloud',true);return;}checkImage();if(imageState(getProject(),item,engine)!=='current'&&!window.confirm('ภาพแนบอาจไม่ตรงกับแบบปัจจุบัน ต้องการส่ง PDF โดยใช้ภาพเดิมหรือไม่?'))return;if(!item.gridLine?.trim()){toast('กรุณาระบุขอบเขต Grid line เช่น Gl.A-B/1-2',true);$('rfi-grid').focus();return;}if(item.gridImageWarning&&!item.gridImageSource){toast('ยังแนบภาพหัวกริดไม่สำเร็จ: '+item.gridImageWarning,true);return;}const button=$('rfi-download');button.disabled=true;try{await exportRfi(item);}catch(e){toast(e.message,true);}finally{button.disabled=false;}};
+ $('rfi-download').onclick=async()=>{const item=chosen();if(!item)return;if(item.reviewRequired){toast(item.reviewRequired,true);return;}if(item.includeCombine!==false&&!item.referencePlan){toast('กรุณากดอัปเดตภาพจากแบบปัจจุบัน เพื่อแนบแปลนอ้างอิงพร้อม Cloud',true);return;}checkImage();if(imageState(getProject(),item,engine)!=='current'&&!window.confirm('ภาพแนบอาจไม่ตรงกับแบบปัจจุบัน ต้องการส่ง PDF โดยใช้ภาพเดิมหรือไม่?'))return;if(!item.gridLine?.trim()){toast('กรุณาระบุขอบเขต Grid line เช่น Gl.A-B/1-2',true);$('rfi-grid').focus();return;}if(item.gridImageWarning&&!item.gridImageSource){toast('ยังแนบภาพหัวกริดไม่สำเร็จ: '+item.gridImageWarning,true);return;}const button=$('rfi-download');button.disabled=true;try{await exportRfi(item);}catch(e){toast(e.message,true);}finally{button.disabled=false;}};
 
  function screenRect(r){const c=getProject().camera;return {x:r.x*c.zoom+c.x,y:r.y*c.zoom+c.y,w:r.w*c.zoom,h:r.h*c.zoom};}
  $('rfi-resize').onclick=()=>{const item=chosen(),p=getProject();if(!item||p.calibration)return;if(item.sheetId!==p.selectedId){toast('เลือกแผ่นของวงนี้ในรายการแบบก่อน',true);return;}engine.tools?.activate("cloud-resize");p.panMode=false;stop();editing={id:item.id,project:p,rect:{...item.rect}};$('rfi-resize-actions').hidden=false;toast('ลากมุมสีน้ำเงิน แล้วกดบันทึกขนาด · ภาพจะอัปเดตตาม Layer ที่แสดงตอนนี้');engine.render();};
@@ -65,7 +79,7 @@ export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
  await commitCloud(r);},true);
  engine.createRfiFromRect=r=>commitCloud(r);
  async function commitCloud(r,target=null,dimensionOverride){const p=getProject();
- try{engine.draw();const pad=12,x=Math.max(0,r.x-pad),y=Math.max(0,r.y-pad),w=Math.min(engine.width,r.x+r.w+pad)-x,h=Math.min(engine.height,r.y+r.h+pad)-y;const rendered=renderRfiCrop(engine,{x,y,w,h},{showDimensions:dimensionOverride??target?.showDimensions??true}),crop=rendered.canvas,d=rendered.scale;const ctx=crop.getContext('2d');ctx.scale(d,d);cloud(ctx,{x:r.x-x,y:r.y-y,w:r.w,h:r.h});const l=p.layers.find(l=>l.id===p.selectedId);const world=engine.world(r);const item={id:crypto.randomUUID(),createdAt:Date.now(),sheetId:l?.id,sheetName:l?.name||'',references:rfiReferences(p,engine.comparisonMode),showDimensions:dimensionOverride??target?.showDimensions??true,gridLine:'',gridImageWarning:'',question:'',image:crop.toDataURL('image/png'),rect:{...world,w:r.w/p.camera.zoom,h:r.h/p.camera.zoom}};item.referencePlan=captureReferencePlan(engine,item,cloud);item.keyPlan=renderKeyPlan(engine,item);if(item.keyPlanWarning)toast(item.keyPlanWarning);item.captureState=captureState(p,item,engine);item.imageUpdatedAt=Date.now();const gridLayer=p.layers.find(v=>v.id===p.baseId&&v.gridBands?.top&&v.gridBands?.side)||(l?.gridBands?.top&&l?.gridBands?.side?l:(p.layers.filter(v=>v.gridBands?.top&&v.gridBands?.side).length===1?p.layers.find(v=>v.gridBands?.top&&v.gridBands?.side):null));if(gridLayer){try{const framed=frameWithGrid(crop,gridLayer,engine.cache.get(gridLayer.assetId)?.source,{...engine.world({x,y}),w:w/p.camera.zoom,h:h/p.camera.zoom});item.image=framed.toDataURL('image/png');item.gridImageSource=gridLayer.name;toast("กำลังอ่านชื่อหัวกริดเฉพาะช่วง Cloud…");try{item.gridLine=dimensionOverride!==undefined?(target?.gridLine||""):(await readGridFrame(framed)||"");if(!item.gridLine)item.gridImageWarning="แนบภาพกริดแล้ว แต่อ่านชื่อกริดไม่ครบ กรุณาตรวจชื่อจากภาพ";}catch{item.gridImageWarning="แนบภาพกริดแล้ว แต่ OCR ไม่สำเร็จ กรุณาตรวจชื่อจากภาพ";}}catch(e){item.gridImageWarning="สร้าง Cloud แล้ว แต่ยังไม่แนบแถบกริด: "+e.message;}}if(target){Object.assign(item,{id:target.id,createdAt:target.createdAt,question:target.question,...(dimensionOverride!==undefined?{gridLine:target.gridLine}: {})});}const reference=p.layers.find(l=>l.id===p.baseId&&l.gridLines?.length)||l;
+ try{engine.draw();const pad=12,x=Math.max(0,r.x-pad),y=Math.max(0,r.y-pad),w=Math.min(engine.width,r.x+r.w+pad)-x,h=Math.min(engine.height,r.y+r.h+pad)-y;const rendered=renderRfiCrop(engine,{x,y,w,h},{showDimensions:dimensionOverride??target?.showDimensions??true}),crop=rendered.canvas,d=rendered.scale;const ctx=crop.getContext('2d');ctx.scale(d,d);cloud(ctx,{x:r.x-x,y:r.y-y,w:r.w,h:r.h});const l=p.layers.find(l=>l.id===p.selectedId);const world=engine.world(r);const item={id:crypto.randomUUID(),createdAt:Date.now(),sheetId:l?.id,sheetName:l?.name||'',references:rfiReferences(p,engine.comparisonMode),showDimensions:dimensionOverride??target?.showDimensions??true,gridLine:'',gridImageWarning:'',question:'',image:crop.toDataURL('image/png'),rect:{...world,w:r.w/p.camera.zoom,h:r.h/p.camera.zoom}};item.referencePlan=captureReferencePlan(engine,item,cloud);item.keyPlan=renderKeyPlan(engine,item);if(item.keyPlanWarning)toast(item.keyPlanWarning);item.captureState=captureState(p,item,engine);item.imageUpdatedAt=Date.now();item.reviewRequired=null;const gridLayer=p.layers.find(v=>v.id===p.baseId&&v.gridBands?.top&&v.gridBands?.side)||(l?.gridBands?.top&&l?.gridBands?.side?l:(p.layers.filter(v=>v.gridBands?.top&&v.gridBands?.side).length===1?p.layers.find(v=>v.gridBands?.top&&v.gridBands?.side):null));if(gridLayer){try{const framed=frameWithGrid(crop,gridLayer,engine.cache.get(gridLayer.assetId)?.source,{...engine.world({x,y}),w:w/p.camera.zoom,h:h/p.camera.zoom});item.image=framed.toDataURL('image/png');item.gridImageSource=gridLayer.name;toast("กำลังอ่านชื่อหัวกริดเฉพาะช่วง Cloud…");try{item.gridLine=dimensionOverride!==undefined?(target?.gridLine||""):(await readGridFrame(framed)||"");if(!item.gridLine)item.gridImageWarning="แนบภาพกริดแล้ว แต่อ่านชื่อกริดไม่ครบ กรุณาตรวจชื่อจากภาพ";}catch{item.gridImageWarning="แนบภาพกริดแล้ว แต่ OCR ไม่สำเร็จ กรุณาตรวจชื่อจากภาพ";}}catch(e){item.gridImageWarning="สร้าง Cloud แล้ว แต่ยังไม่แนบแถบกริด: "+e.message;}}if(target){Object.assign(item,{id:target.id,createdAt:target.createdAt,question:target.question,...(dimensionOverride!==undefined?{gridLine:target.gridLine}: {})});}const reference=p.layers.find(l=>l.id===p.baseId&&l.gridLines?.length)||l;
 const suggested=dimensionOverride===undefined&&!gridLayer&&reference?.gridLines?.length?gridBounds(reference,item.rect):null;
 if(suggested){item.gridLine=suggested;item.gridSource=reference.name;}else if(dimensionOverride===undefined&&!gridLayer&&reference?.gridLines?.length){item.gridLine='';item.gridSource=reference.name;toast('กริดไม่คร่อม Cloud หรือแนวเส้นไม่ขนาน กรุณาตรวจขอบเขตกริด',true);}
 if(getProject()!==p)return;await mutate(target?'ปรับขนาดเมฆแล้ว':'',()=>{if(target)Object.assign(target,item);else (p.rfis??=[]).push(item);});refresh();$('rfi-list').value=item.id;show(item);}catch(e){toast(e.message,true);}}
@@ -79,27 +93,43 @@ export async function exportRfi(item){
  const {jsPDF}=window.jspdf||{};if(!jsPDF)throw Error('ไม่พบ jsPDF ในโปรแกรม');
  const pdf=new jsPDF({unit:'mm',format:'a4'}),width=1440,height=2160;
  let c,ctx,y,separators=[];
- const font='24px Tahoma, sans-serif';
+ // Two display steps larger than the previous form. Keep one shared body size so
+ // labels, questions, answers and respondent details remain visually consistent.
+ const font='28px Tahoma, sans-serif';
  function page(){separators=[];c=document.createElement('canvas');c.width=width*2;c.height=height*2;ctx=c.getContext('2d');ctx.scale(2,2);ctx.fillStyle='white';ctx.fillRect(0,0,width,height);ctx.fillStyle='#000';ctx.font=font;}
  function flush(){pdf.addImage(c.toDataURL('image/png'),'PNG',15,10,180,270);pdf.setDrawColor(0);pdf.setLineWidth(.45);pdf.rect(5,5,200,287);for(const v of separators)pdf.line(5,10+v*.125,205,10+v*.125);}
  function rule(v){separators.push(v);ctx.save();ctx.strokeStyle='#000';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(0,v);ctx.lineTo(width,v);ctx.stroke();ctx.restore();}
  function wrap(text,maxWidth){const rows=[];for(const raw of String(text||'').split('\n')){let row='';for(const ch of raw){if(ctx.measureText(row+ch).width>maxWidth){rows.push(row);row='';}row+=ch;}rows.push(row);}return rows;}
- function lines(text,maxWidth=width){for(const row of wrap(text,maxWidth)){if(y>2140){flush();pdf.addPage();page();y=50;}ctx.fillText(row,0,y);y+=34;}}
- page();ctx.font='bold 25px Arial';ctx.fillText('REQUEST FOR INFORMATION (RFI) - RITTA PROJECT',0,40);ctx.font=font;y=92;
- lines('วันที่: '+new Date().toLocaleDateString('th-TH'),1000);lines('แผ่นแบบอ้างอิง / Layer:',1000);
- for(const ref of item.references||[{name:item.sheetName}]){ctx.fillStyle=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';ctx.fillRect(0,y-20,22,22);ctx.fillStyle='#000';lines('     '+ref.name,1000);}
- if(item.keyPlan){const key=new Image();key.src=item.keyPlan;await key.decode();const s=Math.min(300/key.width,210/key.height);ctx.drawImage(key,1130+(300-key.width*s)/2,10,key.width*s,key.height*s);ctx.save();ctx.font='20px Arial';ctx.textAlign='center';ctx.fillText('KEY PLAN',1280,245);ctx.restore();}
- else{ctx.save();ctx.font='20px Tahoma';ctx.fillText('ยังไม่มี Key Plan',1130,70);ctx.fillText('กรุณาอัปเดตภาพ RFI',1130,102);ctx.restore();}
+ function lines(text,maxWidth=width){for(const row of wrap(text,maxWidth)){if(y>2140){flush();pdf.addPage();page();y=50;}ctx.fillText(row,0,y);y+=40;}}
+ page();ctx.font='bold 29px Arial';const heading='REQUEST FOR INFORMATION (RFI) - '+(item.documentName?.trim()||'RITTA');const headingSize=Math.min(29,29*1080/Math.max(1,ctx.measureText(heading).width));ctx.font='bold '+headingSize+'px Arial';ctx.fillText(heading,0,44);ctx.font=font;y=100;
+ lines('เรื่อง: '+(item.subject||'—'),1080);
+ if(item.keyPlan){const key=new Image();key.src=item.keyPlan;await key.decode();const s=Math.min(300/key.width,210/key.height);ctx.drawImage(key,1130+(300-key.width*s)/2,10,key.width*s,key.height*s);ctx.save();ctx.font='24px Arial';ctx.textAlign='center';ctx.fillText('KEY PLAN',1280,248);ctx.restore();}
+ else{ctx.save();ctx.font='24px Tahoma';ctx.fillText('ยังไม่มี Key Plan',1130,74);ctx.fillText('กรุณาอัปเดตภาพ RFI',1130,110);ctx.restore();}
  const img=new Image();img.src=item.image;await img.decode();
  // Overflowing reference lists continue before the fixed drawing / response layout.
  if(y>420){flush();pdf.addPage();page();y=40;}
- const top=Math.max(275,y+24),bottom=1330,ratio=Math.min(width/img.width,Math.max(1,bottom-top)/img.height);
- ctx.drawImage(img,(width-img.width*ratio)/2,top,img.width*ratio,img.height*ratio);rule(1360);y=1404;
- const question=[...wrap('ขอบเขต Grid line: '+(item.gridLine||''),width),...(item.gridSource?wrap('อ้างอิงกริด: '+item.gridSource,width):[]),...wrap('คำถาม / รายละเอียด:',width),...wrap(item.question||'—',width)];
+ const top=Math.max(275,y+24),bottom=1030,ratio=Math.min(width/img.width,Math.max(1,bottom-top)/img.height);
+ ctx.drawImage(img,(width-img.width*ratio)/2,top,img.width*ratio,img.height*ratio);y=1090;
+ ctx.save();ctx.font='25px Tahoma, sans-serif';
+ const refs=item.references||[{name:item.sheetName}];
+ for(const [index,ref]of refs.entries()){
+  if(y>1215){flush();pdf.addPage();page();ctx.font='21px Tahoma, sans-serif';y=70;}
+  if(index===0)ctx.fillText('แบบอ้างอิง:',320,y);
+  ctx.fillStyle=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#333';ctx.fillRect(450,y-15,14,14);ctx.fillStyle='#000';
+  for(const row of wrap(ref.name||'—',900)){if(y>1215){flush();pdf.addPage();page();ctx.font='25px Tahoma, sans-serif';y=70;}ctx.fillText(row,480,y);y+=35;}
+ }
+ ctx.restore();rule(1250);y=1294;
+ const question=[...wrap('ตำแหน่ง: '+(item.gridLine||''),width),...(item.gridSource?wrap('อ้างอิงกริด: '+item.gridSource,width):[]),...wrap('คำถาม:',width),...wrap(item.question||'—',width)];
  const answer=wrap(item.answer||'',width);
  function section(rows,start,end,title){y=start;for(const row of rows){if(y>end){flush();pdf.addPage();page();y=50;lines(title); }ctx.fillText(row,0,y);y+=34;}}
- section(question,1404,1670,'คำถาม / รายละเอียด (ต่อ)');
- const divider=Math.max(1710,y+15);if(divider>1750){flush();pdf.addPage();page();y=50;}else{rule(1710);y=1754;}
- ctx.font=font;lines('คำตอบ');section(answer,y,1990,'คำตอบ (ต่อ)');rule(2030);y=2074;lines('ผู้อนุมัติ: ____________________________________');lines('วันที่อนุมัติ: _________________________________');
- flush();if(item.referencePlan)await appendReferencePlan(pdf,item.referencePlan);pdf.save('RFI-'+new Date(item.createdAt).toISOString().replace(/[:.]/g,'-')+'.pdf');
+ section(question,1294,1630,'คำถาม / รายละเอียด (ต่อ)');
+ const divider=Math.max(1660,y+15);if(divider>1700){flush();pdf.addPage();page();y=50;}else{rule(1660);y=1704;}
+ ctx.font=font;lines('คำตอบ');section(answer,y,1940,'คำตอบ (ต่อ)');
+ ctx.save();ctx.strokeStyle='#999';ctx.lineWidth=1;ctx.setLineDash([2,4]);for(let lineY=Math.max(1770,y+15);lineY<1970;lineY+=60){ctx.beginPath();ctx.moveTo(0,lineY);ctx.lineTo(width,lineY);ctx.stroke();}ctx.restore();rule(1990);
+ ctx.font='26px Tahoma, sans-serif';
+ const field=(label,value,x,y)=>{const text=label+': '+(value||'........................................');const rows=wrap(text,680);for(let i=0;i<Math.min(2,rows.length);i++)ctx.fillText(rows[i],x,y+i*30);};
+ field('ผู้ตอบ',item.respondent,0,2030);field('ตำแหน่ง',item.respondentRole,740,2030);
+ field('หน่วยงาน',item.respondentCompany,0,2090);field('วันที่ตอบ',item.responseDate,740,2090);
+ ctx.fillText('ลายมือชื่อ: ......................................................',0,2150);
+ flush();if(item.includeCombine!==false&&item.referencePlan)await appendReferencePlan(pdf,item.referencePlan);pdf.save('RFI-'+new Date(item.createdAt).toISOString().replace(/[:.]/g,'-')+'.pdf');
 }

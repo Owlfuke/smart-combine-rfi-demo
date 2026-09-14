@@ -31,7 +31,7 @@ async function pdfjs(){
   }
   return pdfLibrary;
 }
-async function loadPdf(file,signal,password){
+export async function loadPdf(file,signal,password){
   const lib=await pdfjs();check(signal);
   const task=lib.getDocument({data:new Uint8Array(await file.arrayBuffer()),isEvalSupported:false,
     useWasm:false,stopAtErrors:true,enableXfa:false,
@@ -51,7 +51,7 @@ async function loadPdf(file,signal,password){
   }catch(error){if(signal.aborted)throw abortError();throw Error(error.name==="InvalidPDFException"?"โครงสร้าง PDF เสียหรืออ่านไม่ได้":error.name==="PasswordException"?"PDF ต้องใช้รหัสผ่าน":error.message);}
   finally{signal.removeEventListener("abort",stop);}
 }
-async function pdfCanvas(pdf,n,thumbnail,signal){
+export async function pdfCanvas(pdf,n,thumbnail,signal){
   check(signal);const page=await pdf.getPage(n);check(signal);
   const v=page.getViewport({scale:1});
   const scale=thumbnail?Math.min(220/v.width,160/v.height):Math.min(2.5,6000/Math.max(v.width,v.height),Math.sqrt(LIMITS.pagePixels/(v.width*v.height)));

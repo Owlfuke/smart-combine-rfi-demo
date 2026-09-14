@@ -1,3 +1,4 @@
+import {markAlignmentChanged} from './drawing-operations.mjs';
 import {checkOffset} from './calibration-check.mjs';
 import {map,similarity,identity} from "./model.mjs";
 export class Engine {
@@ -123,7 +124,7 @@ export class Engine {
   apply(){
     const c=this.p.calibration,l=this.p.layers.find(l=>l.id===c.layerId),r=this.result();
     if(!r)return;
-    if(c.mode==="align"){l.transform=r.matrix;l.alignment={p:c.p,q:c.q,baseId:this.p.baseId};l.check=null;this.p.showMarkers=false;}
+    if(c.mode==="align"){markAlignmentChanged(this.p,l.id);l.transform=r.matrix;l.alignment={p:c.p,q:c.q,baseId:this.p.baseId};l.check=null;this.p.showMarkers=false;}
     else l.check={p:c.p[0],q:c.q[0],...r};
     this.p.calibration=null;this.cursor();this.fit();
   }

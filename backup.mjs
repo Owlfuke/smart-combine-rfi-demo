@@ -1,7 +1,8 @@
+import {packAttachments} from './rfi-assets.mjs';
 import {referenced,validate} from './model.mjs';
 const magic=new TextEncoder().encode('SCRFIB01');
 export async function createBackup(project,assets,templates=[]){
-  const snapshot=structuredClone(validate(project)),entries=[],parts=[];
+  const snapshot=packAttachments(structuredClone(validate(project)),assets),entries=[],parts=[];
   let offset=0;
   for(const id of referenced(snapshot)){
     const blob=assets.get(id);if(!(blob instanceof Blob))throw Error('ไฟล์ประกอบไม่ครบ: '+id);
@@ -38,6 +39,7 @@ export function prepareRestore(data){
  for(const [id,blob] of data.assets){const next=crypto.randomUUID();ids.set(id,next);assets.set(next,blob);}
  for(const state of [p,...p.history,...p.future]){
   validate({...p,...state,history:[],future:[]});
+  for(const r of state.rfis||[])for(const field of Object.keys(r.attachmentIds||{}))r.attachmentIds[field]=ids.get(r.attachmentIds[field]);
   for(const l of state.layers){l.assetId=ids.get(l.assetId);if(l.sourceId)l.sourceId=ids.get(l.sourceId);}
  }
  p.id=crypto.randomUUID();p.name=(p.name||'โครงการ')+' (กู้คืน)';p.revision=0;p.savedAt=0;

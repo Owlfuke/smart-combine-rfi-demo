@@ -1,3 +1,6 @@
+import {packAttachments,hydrateAttachments,releaseAttachmentUrls} from './rfi-assets.mjs';
+import {replaceQuickSheet,updateQuickMetadata} from './drawing-operations.mjs';
+import {installQuickUI,readQuickFile} from './quick-combine.mjs';
 import {installDrawingBar} from './drawing-bar.mjs';
 import {installToolController} from './tool-controller.mjs';
 import {installOverlayExport} from './overlay-export.mjs';
@@ -70,6 +73,7 @@ async function save(){
   if(!p||blocked)return;
   if(saveFlight){await saveFlight;if(signature(p)!==committed)return save();return;}
   if(signature(p)===committed){savedText();return;}
+  packAttachments(p,pool);hydrateAttachments(p,pool);
   const current=p,sig=signature(p),record=clone(p);
   $("save-status").textContent="กำลังบันทึก…";
   saveFlight=(async()=>{
@@ -91,13 +95,36 @@ async function save(){
 const engine=new Engine($("combined-canvas"),$("calibration-guide-canvas"),{
   change:full=>{if(full){update();schedule();}else updateView();},status,error
 });
+const quickRefresh=installQuickUI({getProject:()=>p,enter:()=>safe(async()=>{
+ if(busy||blocked||importActive||p?.calibration)return;
+ if(p?.kind==='quick')return;
+ const parent=p.id;await save();const all=await store.all('projects');let target=all.find(q=>q.kind==='quick'&&q.returnProjectId===parent);
+ if(!target){target=project('QUICK COMBINE · '+p.name);target.kind='quick';target.returnProjectId=parent;await store.save(target,new Map());}
+ document.body.classList.remove('register-view');$('register-page').hidden=true;await openProject(target.id);
+}),importSide:(side,files)=>safe(()=>quickImport(side,files)),edit:(l,key,value)=>safe(()=>mutate('',()=>{updateQuickMetadata(l,key,value);}))});
+async function quickImport(side,files){
+ if(busy||blocked||importActive||p?.kind!=='quick'||p.calibration)return;
+ if(files.length!==1)throw Error('เลือกครั้งละหนึ่งไฟล์ต่อฝั่ง');
+ const current=p,old=p.layers.find(l=>l.quickSide===side);
+ if(old?.locked)throw Error('ปลดล็อกแผ่นก่อนเปลี่ยนไฟล์');
+ if(old&&!await confirm('เปลี่ยนแผ่นแบบ','การเปลี่ยนไฟล์จะล้างการจับคู่และมาตราส่วนของแผ่นที่เปลี่ยน ภาพ RFI เดิมจะยังคงอยู่ ต้องการเปลี่ยนหรือไม่?'))return;
+ engine.tools?.reset();importActive=true;setBusy(busy);
+ try{const result=await readQuickFile(files[0],password);if(!result||p!==current)return;
+ for(const [id,blob]of result.assets)pool.set(id,blob);
+ await mutate('นำเข้า QUICK COMBINE แล้ว',()=>{
+  replaceQuickSheet(p,side,result.data);
+ },{hydrate:true});engine.fit();await save();
+ }finally{importActive=false;setBusy(false);}
+}
 async function loadAssets(record){
+  packAttachments(record,pool);
   const map=new Map();
   for(const id of referenced(record)){
     const value=pool.get(id)||(await store.get("assets",id))?.blob;
     if(!value)throw Error("ไม่พบภาพที่บันทึกในงานนี้ กรุณาลองเปิดงานอีกครั้ง");
     map.set(id,value);
   }
+  hydrateAttachments(record,map);
   return map;
 }
 async function projects(){
@@ -122,7 +149,7 @@ async function openProject(id,{skipSave=false}={}){
     const oldSize=next.viewSize;
     if(oldSize?.width){next.camera.x+=(engine.width-oldSize.width)/2;next.camera.y+=(engine.height-oldSize.height)/2;}
     next.viewSize={width:engine.width,height:engine.height};
-    p=next;pool=assets;blocked=false;committed=signature(p);
+    p=next;pool=assets;releaseAttachmentUrls(new Set(referenced(p)));blocked=false;committed=signature(p);
     await store.setting("last-project",p.id);await projects();update();savedText();
     setBusy(false);
     if(!oldSize?.width&&p.layers.length)engine.fit();
@@ -194,6 +221,7 @@ const importer=new Importer({
   }
 });
 function importFiles(files){
+  if(p?.kind==="quick")return quickImport(p.layers.some(l=>l.quickSide==="base")?"compare":"base",files);
   if(busy||blocked||!p)return;
   if(p.calibration){toast("ยืนยันหรือยกเลิกการจับคู่กริดก่อนนำเข้า",true);return;}
   $("import-discipline").value=p.filter==="ALL"?"AR":p.filter;
@@ -227,7 +255,7 @@ function renderLayers(){
   const properties=$('layer-properties');
   let parking=$('layer-properties-parking');if(!parking){parking=document.createElement('div');parking.id='layer-properties-parking';parking.hidden=true;document.body.append(parking);}
   parking.append(properties);
-  const list=$("drawing-list");list.replaceChildren();
+  const list=$("drawing-list");list.replaceChildren();document.querySelectorAll(".quick-card-list").forEach(list=>list.replaceChildren());
   $("layer-count").textContent=p.layers.length+" / "+LIMITS.layers+" แผ่น";
   const items=p.layers.filter(l=>p.filter==="ALL"||l.discipline===p.filter);
   if(!items.length){const empty=document.createElement("p");empty.className="hint";empty.textContent=p.layers.length?"ไม่มีแผ่นในสาขานี้":"ยังไม่มีแบบ · นำเข้าไฟล์เพื่อเริ่มต้น";list.append(empty);}
@@ -254,7 +282,7 @@ function renderLayers(){
     actions.append(cardButton(l.locked?"🔒":"🔓","ล็อกภาพ "+l.name,()=>mutate("",()=>{l.locked=!l.locked;}),!!p.calibration));
     actions.append(cardButton("↑","เลื่อนขึ้น "+l.name,()=>moveLayer(l.id,p.layers.indexOf(l)-1),l.locked||!!p.calibration||p.layers.indexOf(l)===0));
     actions.append(cardButton("↓","เลื่อนลง "+l.name,()=>moveLayer(l.id,p.layers.indexOf(l)+1),l.locked||!!p.calibration||p.layers.indexOf(l)===p.layers.length-1));
-    const del=cardButton("ลบ","ลบภาพ "+l.name,()=>remove(l),l.locked||!!p.calibration);del.className="danger";actions.append(del);actions.append(cardButton("แก้ไขชื่อ","แก้ไขชื่อแบบ "+l.name,()=>openDrawingName(l),l.locked||!!p.calibration));actions.append(cardButton("ประวัติ","ประวัติ Revision "+l.name,()=>showRevisionHistory(p.layers,l.id,engine.cache)));actions.append(cardButton("กริด","กำหนดกริด "+l.name,()=>editGrid(l,engine.cache.get(l.assetId)?.source,(lines,bands)=>mutate("บันทึกกริดแล้ว",()=>{l.gridLines=lines;l.gridBands=bands;})),l.locked||!!p.calibration));row.append(actions);list.append(row);
+    const del=cardButton("ลบ","ลบภาพ "+l.name,()=>remove(l),l.locked||!!p.calibration);del.className="danger";actions.append(del);actions.append(cardButton("แก้ไขชื่อ","แก้ไขชื่อแบบ "+l.name,()=>openDrawingName(l),l.locked||!!p.calibration));actions.append(cardButton("ประวัติ","ประวัติ Revision "+l.name,()=>showRevisionHistory(p.layers,l.id,engine.cache)));actions.append(cardButton("กริด","กำหนดกริด "+l.name,()=>editGrid(l,engine.cache.get(l.assetId)?.source,(lines,bands)=>mutate("บันทึกกริดแล้ว",()=>{l.gridLines=lines;l.gridBands=bands;})),l.locked||!!p.calibration));row.append(actions);const target=p.kind==='quick'?document.querySelector('[data-quick-side="'+l.quickSide+'"]'):list;(target||list).append(row);
     {
       const settings=document.createElement('div');settings.className='card-layer-settings';const controls=l.id===p.selectedId?properties:properties.cloneNode(true);
       controls.querySelectorAll(".card-order-actions").forEach(group=>group.remove());
@@ -272,7 +300,7 @@ function renderLayers(){
       const buttons=[...actions.children],topActions=document.createElement('div'),viewActions=document.createElement('div'),orderActions=document.createElement('div');
       topActions.className='card-title-actions';viewActions.className='card-view-actions';orderActions.className='card-order-actions';
       topActions.append(buttons[5],buttons[6]);head.append(topActions);
-      const baseButton=cardButton('▣','ใช้เป็นแผ่นฐาน '+l.name,()=>{choose();$('set-base').click();},!!p.calibration||l.id===p.baseId);
+      const baseButton=cardButton('▣','ใช้เป็นแผ่นฐาน '+l.name,()=>{choose();$('set-base').click();},!!p.calibration||p.kind==='quick'||l.id===p.baseId);
       const calibrate=cardButton('Calibrate','Calibrate '+l.name,()=>{choose();toggleCalibratePanel(true);},!!p.calibration||l.id===p.baseId);
       viewActions.append(buttons[0],baseButton,buttons[1],calibrate,buttons[7],badge);actions.append(viewActions);
       orderActions.append(buttons[4],buttons[2],buttons[3]);controls.querySelector('.card-quick-controls').append(orderActions);
@@ -304,7 +332,7 @@ function update(){
   engine.tools?.sync(p ? p.id+":"+p.selectedId : null);
   engine.refreshRfi?.();
   if(document.body.classList.contains("register-view"))renderRegisterPage();
-  if(!p)return;updateView();renderLayers();
+  if(!p)return;updateView();renderLayers();quickRefresh();
   const l=selected(),cal=p.calibration,locked=!l||l.locked||!!cal,isBase=l?.id===p.baseId;
   for(const b of document.querySelectorAll("[data-filter]"))b.setAttribute("aria-pressed",String(b.dataset.filter===p.filter));
   $("undo-button").disabled=!p.history.length&&!cal;$("redo-button").disabled=!p.future.length||!!cal;
@@ -464,6 +492,7 @@ function renderRegisterPage(){
  if(!grid.children.length){const text=document.createElement("p");text.textContent=p.layers.length?"ไม่พบแบบที่ค้นหา":"เริ่มต้นโดยนำเข้า PDF หรือรูปภาพ";grid.append(text);}
 }
 function switchWorkspace(view){
+ if(p?.kind==="quick"){safe(async()=>{const all=await store.all("projects");let target=all.find(q=>q.id===p.returnProjectId&&q.kind!=="quick")||all.find(q=>q.kind!=="quick");if(!target){target=project("งานใหม่");await store.save(target,new Map());}await openProject(target.id);switchWorkspace(view);});return;}
  const gallery=view==="register";document.body.classList.toggle("register-view",gallery);
  $("register-page").hidden=!gallery;
  document.querySelectorAll("[data-workspace-view]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.workspaceView===view)));
