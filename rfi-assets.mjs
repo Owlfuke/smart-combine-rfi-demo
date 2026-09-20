@@ -1,6 +1,7 @@
 export const attachmentFields=['image','keyPlan','referencePlan'];
 const states=p=>[p,...(p.history||[]),...(p.future||[])];
 export function attachmentIds(p){return states(p).flatMap(s=>(s.rfis||[]).flatMap(r=>Object.values(r.attachmentIds||{})));}
+export function hasEmbeddedAttachments(p){return states(p).some(state=>(state.rfis||[]).some(item=>attachmentFields.some(field=>typeof item[field]==='string'&&item[field].startsWith('data:image/'))));}
 export function packAttachments(p,assets){
  const seen=new Map();
  for(const state of states(p))for(const item of state.rfis||[])for(const field of attachmentFields){

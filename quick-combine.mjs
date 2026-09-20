@@ -31,16 +31,20 @@ export async function readQuickFile(file,password){
  finally{controller.abort();await pdf?.loadingTask.destroy().catch(()=>{});bitmap?.close();if(canvas)canvas.width=canvas.height=0;dialog.close();dialog.remove();}
 }
 
-export function installQuickUI({getProject,enter,importSide,edit}){
+export function installQuickUI({getProject,enter,importSide,captureSide,pasteSide,edit}){
  const nav=document.querySelector('.workspace-navigation'),button=document.createElement('button');button.id='quick-combine-open';button.textContent='⚡ QUICK COMBINE';button.onclick=enter;nav.append(button);
  const left=document.createElement('div');left.id='quick-left';left.hidden=true;document.getElementById('drawing-drop-zone').before(left);
  const right=document.createElement('aside');right.id='quick-right';right.className='panel';right.hidden=true;document.getElementById('workspace').append(right);
  const lists={};
  for(const [side,container,title] of [['base',left,'แบบตั้งต้น'],['compare',right,'แบบเปรียบเทียบ']]){
   const heading=document.createElement('h2');heading.textContent=title;const upload=document.createElement('button');upload.textContent='＋ เลือก PDF 1 หน้า / รูป 1 รูป';upload.className='quick-upload';upload.id='quick-upload-'+side;
+  const actions=document.createElement('div');actions.className='quick-import-actions';
+  const capture=document.createElement('button');capture.type='button';capture.id='quick-capture-'+side;capture.textContent='▣ Capture Screen';capture.title='Edge จะให้เลือกหน้าจอ หน้าต่าง หรือแท็บทุกครั้ง';
+  const paste=document.createElement('button');paste.type='button';paste.id='quick-paste-'+side;paste.textContent='⎘ วาง Screenshot';paste.title='วางภาพจาก Snipping Tool แล้ว Crop ก่อนนำเข้า';
   const file=document.createElement('input');file.type='file';file.accept='.pdf,.png,.jpg,.jpeg';file.hidden=true;file.id='quick-file-'+side;
-  upload.onclick=()=>file.click();file.onchange=()=>{const f=file.files[0];file.value='';if(f)importSide(side,[f]);};upload.ondragover=e=>e.preventDefault();upload.ondrop=e=>{e.preventDefault();importSide(side,[...e.dataTransfer.files]);};
-  const list=document.createElement('div');list.className='quick-card-list';list.dataset.quickSide=side;lists[side]=list;container.append(heading,upload,file,list);
+  upload.onclick=()=>file.click();capture.onclick=()=>captureSide?.(side);paste.onclick=()=>pasteSide?.(side);file.onchange=()=>{const f=file.files[0];file.value='';if(f)importSide(side,[f]);};upload.ondragover=e=>e.preventDefault();upload.ondrop=e=>{e.preventDefault();importSide(side,[...e.dataTransfer.files]);};
+  actions.append(upload,capture,paste);
+  const list=document.createElement('div');list.className='quick-card-list';list.dataset.quickSide=side;lists[side]=list;container.append(heading,actions,file,list);
  }
  const fold=document.createElement('button');fold.textContent='พับ / เปิดแบบเปรียบเทียบ';fold.id='quick-fold-right';right.prepend(fold);fold.onclick=()=>document.body.classList.toggle('quick-right-folded');
  // Match the space occupied by navigation above the left sheet panel.

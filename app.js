@@ -1,6 +1,8 @@
-import {packAttachments,hydrateAttachments,releaseAttachmentUrls} from './rfi-assets.mjs';
+import {packAttachments,hydrateAttachments,releaseAttachmentUrls,hasEmbeddedAttachments} from './rfi-assets.mjs';
+import {formatBytes,inspectProjectHealth} from './project-health.mjs';
 import {replaceQuickSheet,updateQuickMetadata} from './drawing-operations.mjs';
 import {installQuickUI,readQuickFile} from './quick-combine.mjs';
+import {captureQuickScreen,pasteQuickScreenshot} from './quick-capture.mjs';
 import {installDrawingBar} from './drawing-bar.mjs';
 import {installToolController} from './tool-controller.mjs';
 import {installOverlayExport} from './overlay-export.mjs';
@@ -46,7 +48,7 @@ function error(e){
 }
 async function safe(fn){try{await fn();}catch(e){error(e);}}
 function listen(id,event,fn){$(id).addEventListener(event,e=>safe(()=>fn(e)));}
-function setBusy(value){busy=value;$("workspace").inert=value||blocked;for(const id of ["new-project","rename-project","project-select","save-state","backup-project","restore-project"])$(id).disabled=value||blocked||(importActive&&id!=="save-state");}
+function setBusy(value){busy=value;$("workspace").inert=value||blocked;for(const id of ["new-project","rename-project","project-select","save-state","backup-project","restore-project","project-health"])$(id).disabled=value||blocked||(importActive&&id!=="save-state");}
 function status(message){$("canvas-status").textContent=message;}
 function savedText(){
   $("save-status").textContent=p?.savedAt?"บันทึก "+new Date(p.savedAt).toLocaleTimeString("th-TH",{hour:"2-digit",minute:"2-digit",second:"2-digit"}):"พร้อมบันทึกอัตโนมัติ";
@@ -85,7 +87,7 @@ async function save(){
       if(e instanceof ConflictError){
         blocked=true;setBusy(false);$("error-message").textContent="งานนี้มีเวอร์ชันใหม่จากอีกแท็บ หยุดแก้ไขเพื่อไม่เขียนทับกัน กดเปิดงานล่าสุดเพื่อใช้ข้อมูลจากอีกแท็บ";
         $("error-banner").hidden=false;
-      }else toast("บันทึกไม่สำเร็จ ข้อมูลเดิมยังอยู่: "+e.message,true);
+      }else toast("บันทึกไม่สำเร็จ ข้อมูลเดิมยังอยู่: "+e.message,true,{label:"สร้างไฟล์กู้คืน",run:()=>downloadProjectBackup({suffix:"-recovery"})});
       throw e;
     }
   })();
@@ -101,19 +103,31 @@ const quickRefresh=installQuickUI({getProject:()=>p,enter:()=>safe(async()=>{
  const parent=p.id;await save();const all=await store.all('projects');let target=all.find(q=>q.kind==='quick'&&q.returnProjectId===parent);
  if(!target){target=project('QUICK COMBINE · '+p.name);target.kind='quick';target.returnProjectId=parent;await store.save(target,new Map());}
  document.body.classList.remove('register-view');$('register-page').hidden=true;await openProject(target.id);
-}),importSide:(side,files)=>safe(()=>quickImport(side,files)),edit:(l,key,value)=>safe(()=>mutate('',()=>{updateQuickMetadata(l,key,value);}))});
-async function quickImport(side,files){
- if(busy||blocked||importActive||p?.kind!=='quick'||p.calibration)return;
- if(files.length!==1)throw Error('เลือกครั้งละหนึ่งไฟล์ต่อฝั่ง');
- const current=p,old=p.layers.find(l=>l.quickSide===side);
- if(old?.locked)throw Error('ปลดล็อกแผ่นก่อนเปลี่ยนไฟล์');
- if(old&&!await confirm('เปลี่ยนแผ่นแบบ','การเปลี่ยนไฟล์จะล้างการจับคู่และมาตราส่วนของแผ่นที่เปลี่ยน ภาพ RFI เดิมจะยังคงอยู่ ต้องการเปลี่ยนหรือไม่?'))return;
- engine.tools?.reset();importActive=true;setBusy(busy);
- try{const result=await readQuickFile(files[0],password);if(!result||p!==current)return;
+}),importSide:(side,files)=>safe(()=>quickImport(side,files)),captureSide:side=>safe(()=>quickCapture(side,'screen')),pasteSide:side=>safe(()=>quickCapture(side,'paste')),edit:(l,key,value)=>safe(()=>mutate('',()=>{updateQuickMetadata(l,key,value);}))});
+function quickSideReady(side){
+ if(busy||blocked||importActive||p?.kind!=='quick'||p.calibration)return null;
+ return {current:p,old:p.layers.find(l=>l.quickSide===side)};
+}
+async function replaceQuickResult(side,state,result){
+ if(!result||p!==state.current)return;
  for(const [id,blob]of result.assets)pool.set(id,blob);
- await mutate('นำเข้า QUICK COMBINE แล้ว',()=>{
-  replaceQuickSheet(p,side,result.data);
- },{hydrate:true});engine.fit();await save();
+ await mutate('นำเข้า QUICK COMBINE แล้ว',()=>{replaceQuickSheet(p,side,result.data);},{hydrate:true});engine.fit();await save();
+}
+async function quickCapture(side,method){
+ const state=quickSideReady(side);if(!state)return;
+ if(state.old?.locked)throw Error('ปลดล็อกแผ่นก่อนเปลี่ยนไฟล์');
+ if(state.old&&!await confirm('เปลี่ยนแผ่นแบบ','การเปลี่ยนภาพจะล้างการจับคู่และมาตราส่วนของแผ่นที่เปลี่ยน ภาพ RFI เดิมจะยังคงอยู่ ต้องการเปลี่ยนหรือไม่?'))return;
+ engine.tools?.reset();importActive=true;setBusy(busy);
+ try{const result=method==='paste'?await pasteQuickScreenshot():await captureQuickScreen();await replaceQuickResult(side,state,result);}
+ finally{importActive=false;setBusy(false);}
+}
+async function quickImport(side,files){
+ const state=quickSideReady(side);if(!state)return;
+ if(files.length!==1)throw Error('เลือกครั้งละหนึ่งไฟล์ต่อฝั่ง');
+ if(state.old?.locked)throw Error('ปลดล็อกแผ่นก่อนเปลี่ยนไฟล์');
+ if(state.old&&!await confirm('เปลี่ยนแผ่นแบบ','การเปลี่ยนไฟล์จะล้างการจับคู่และมาตราส่วนของแผ่นที่เปลี่ยน ภาพ RFI เดิมจะยังคงอยู่ ต้องการเปลี่ยนหรือไม่?'))return;
+ engine.tools?.reset();importActive=true;setBusy(busy);
+ try{const result=await readQuickFile(files[0],password);await replaceQuickResult(side,state,result);
  }finally{importActive=false;setBusy(false);}
 }
 async function loadAssets(record){
@@ -141,10 +155,10 @@ async function openProject(id,{skipSave=false}={}){
   if(!skipSave)await save();
   setBusy(true);
   try{
-    const next=validate(await store.get("projects",id));
+    const next=validate(await store.get("projects",id)),attachmentMigration=hasEmbeddedAttachments(next);
     const assets=await loadAssets(next);
     await engine.load(next,assets);
-    const migrated=next.layers.some(l=>!l.fingerprint);
+    const migrated=attachmentMigration||next.layers.some(l=>!l.fingerprint);
     for(const l of next.layers)if(!l.fingerprint)l.fingerprint=await hash(assets.get(l.sourceId||l.assetId));
     const oldSize=next.viewSize;
     if(oldSize?.width){next.camera.x+=(engine.width-oldSize.width)/2;next.camera.y+=(engine.height-oldSize.height)/2;}
@@ -153,7 +167,7 @@ async function openProject(id,{skipSave=false}={}){
     await store.setting("last-project",p.id);await projects();update();savedText();
     setBusy(false);
     if(!oldSize?.width&&p.layers.length)engine.fit();
-    if(migrated){committed="";await save();}
+    if(migrated){committed="";await save();if(attachmentMigration)toast("ย้ายภาพแนบจากข้อมูลรุ่นเก่าเรียบร้อยแล้ว");}
     status(p.calibration?"คืนค่างานแล้ว · จับคู่กริดต่อได้":"เปิดงาน "+p.name+" แล้ว");
   }catch(e){if(p)$("project-select").value=p.id;throw e;}finally{setBusy(false);}
 }
@@ -513,21 +527,43 @@ listen('comparison-split','input',()=>{engine.comparisonSplit=+$('comparison-spl
 
 listen('comparison-tools','toggle',()=>{if(!$('comparison-tools').open){$('comparison-mode').value='normal';$('comparison-split').hidden=true;engine.comparisonMode='normal';engine.render();}});
 
+async function downloadProjectBackup({saveFirst=false,suffix=""}={}){
+  if(!p)throw Error("ยังไม่มีงานสำหรับสำรอง");
+  if(saveFirst)await save();
+  const snapshot=clone(p),assets=await loadAssets(snapshot);
+  let templates=[];const raw=localStorage.getItem("smart-combine-region-templates-v1");if(raw)templates=JSON.parse(raw);
+  const blob=await createBackup(snapshot,assets,templates),url=URL.createObjectURL(blob),a=document.createElement("a");
+  const name=snapshot.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g,"_").slice(0,80)||"project";
+  a.href=url;a.download=name+suffix+"-"+new Date().toISOString().replace(/[:.]/g,"-")+".scrfi";
+  document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+  toast("สร้างไฟล์กู้คืนแล้ว · โปรดเก็บไฟล์ .scrfi ไว้นอกเบราว์เซอร์");
+}
 listen("backup-project","click",async()=>{
-  if(busy||blocked||importActive||!p)return;
-  setBusy(true);
+  if(busy||blocked||importActive||!p)return;setBusy(true);
   const button=$("backup-project");button.textContent="กำลังสำรอง…";
-  try{
-    await save();
-    const snapshot=clone(p),assets=await loadAssets(snapshot);
-    let templates=[];const raw=localStorage.getItem("smart-combine-region-templates-v1");if(raw)templates=JSON.parse(raw);
-    const blob=await createBackup(snapshot,assets,templates);
-    const url=URL.createObjectURL(blob),a=document.createElement("a");
-    a.href=url;a.download=(snapshot.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g,"_").slice(0,80)||"project")+"-"+new Date().toISOString().replace(/[:.]/g,"-")+".scrfi";
-    document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
-    toast("สร้างไฟล์สำรองแล้ว · โปรดเก็บไฟล์ .scrfi ที่ดาวน์โหลดไว้");
-  }finally{button.textContent="สำรองโครงการ";setBusy(false);}
+  try{await downloadProjectBackup({saveFirst:true});}finally{button.textContent="สำรองโครงการ";setBusy(false);}
 });
+
+async function refreshProjectHealth(){
+  const report=await inspectProjectHealth({project:p,store,memoryAssets:pool,dirty:signature(p)!==committed});
+  const summary=$("project-health-summary");summary.className="health-summary "+report.status;
+  summary.textContent=report.status==="ok"?"งานนี้สมบูรณ์และพร้อมสร้างไฟล์กู้คืน":report.status==="warning"?"งานเปิดได้ แต่มีรายการที่ควรตรวจ":"พบปัญหาที่อาจทำให้งานเปิดไม่ครบ";
+  $("health-structure").textContent=(report.valid?"ปกติ":"ผิดปกติ")+" · รูปแบบข้อมูล "+(report.formatVersion??"ไม่ทราบ");
+  $("health-assets").textContent=report.assetCount+" ไฟล์ · "+formatBytes(report.assetBytes)+(report.missing.length?" · หาย "+report.missing.length:"");
+  $("health-storage").textContent=report.usage===null?"เบราว์เซอร์ไม่รายงาน":formatBytes(report.usage)+(report.quota?" / "+formatBytes(report.quota)+" ("+Math.round(report.ratio*100)+"%)":"");
+  $("health-persistence").textContent=report.persisted===true?"ได้รับการป้องกันจากการล้างอัตโนมัติ":report.persisted===false?"ควรเก็บไฟล์ .scrfi แยกไว้":"เบราว์เซอร์ไม่รายงาน";
+  const issues=$("health-issues");issues.replaceChildren();
+  for(const message of report.issues.length?report.issues:["ไม่พบปัญหา"]){const item=document.createElement("li");item.textContent=message;issues.append(item);}
+  return report;
+}
+listen("project-health","click",async()=>{$("project-health-dialog").showModal();await refreshProjectHealth();});
+listen("health-refresh","click",refreshProjectHealth);
+listen("health-close","click",()=>$("project-health-dialog").close());
+listen("health-reopen","click",async()=>{
+  if(signature(p)!==committed&&!(await confirm("เปิดฉบับบันทึกล่าสุด","การแก้ไขที่ยังไม่บันทึกในหน้าจอนี้จะถูกแทน ต้องการดำเนินการต่อหรือไม่")))return;
+  const id=p.id;$("project-health-dialog").close();await openProject(id,{skipSave:true});toast("เปิดฉบับที่บันทึกล่าสุดแล้ว");
+});
+listen("health-backup","click",async()=>{const button=$("health-backup");button.disabled=true;try{await downloadProjectBackup({suffix:"-recovery"});await refreshProjectHealth();}finally{button.disabled=false;}});
 
 function toggleCalibratePanel(open){document.body.classList.toggle("calibrate-open",open);$("calibrate-launcher").setAttribute("aria-expanded",String(open));}
 listen("calibrate-launcher","click",()=>toggleCalibratePanel(!document.body.classList.contains("calibrate-open")));
