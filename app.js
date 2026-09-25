@@ -10,6 +10,7 @@ import {installRevisionDiff} from './revision-diff.mjs';
 import {describeCheck} from './calibration-check.mjs';
 import {installAppMenus} from './app-menus.mjs';
 import {installMeasurements} from './measurements.mjs';
+import {installBasicMarkup} from './basic-markup.mjs';
 import {assertNewRevisions} from './versions.mjs';
 import {createSignature} from './state-signature.mjs';
 import {editGrid} from "./grids.mjs";
@@ -578,6 +579,7 @@ installRfi({engine,getProject:()=>p,mutate,schedule,toast,navigate:item=>{
  p.camera={zoom,x:available/2-(r.x+r.w/2)*zoom,y:height/2-(r.y+r.h/2)*zoom};update();engine.render();schedule();return true;
 }});
 installMeasurements({engine,getProject:()=>p,mutate,toast,getSource:async l=>pool.get(l.sourceId)||(await store.get('assets',l.sourceId))?.blob});
+installBasicMarkup({engine,getProject:()=>p,mutate,toast});
 installRevisionDiff({engine,getProject:()=>p,toast});
 installOverlayExport({engine,getProject:()=>p,toast});
 installAppMenus();
