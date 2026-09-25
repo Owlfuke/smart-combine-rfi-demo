@@ -1,7 +1,13 @@
 // The RFI form shrinks a high-resolution crop more than the full-plan pages.
 export const RFI_PDF_CLOUD_STROKE=6;
 export const PLAN_PDF_CLOUD_STROKE=3;
-export const PLAN_PDF_CLOUD_SHAPE=Object.freeze({step:32,bulge:.85});
+export const PLAN_PDF_CLOUD_SHAPE=Object.freeze({step:18,bulge:.5});
+export const RFI_PDF_CLOUD_IMAGE_VERSION=4;
+
+// Small crops are enlarged on A4, so use more scallops along their short edge.
+export function rfiPdfCloudShape(rect){
+ return {step:Math.min(18,Math.max(4,Math.min(rect.w,rect.h)/8)),bulge:.5};
+}
 
 export function cloud(ctx,r,lineWidth=2.5,{step=18,bulge=.5}={}){
  ctx.save();ctx.strokeStyle='#dc2626';ctx.lineWidth=lineWidth;ctx.beginPath();
