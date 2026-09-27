@@ -15,7 +15,7 @@ export function rfiReferences(p,mode){
 }
 export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
  const $=id=>document.getElementById(id),canvas=engine.canvas;let armed=false,drag=null,current=null,editing=null;
- const panel=$('rfi-panel');
+ const panel=$('rfi-panel');let previewToken=0,previewCache=null;
  const headingLabel=document.createElement('label');headingLabel.textContent='ชื่อท้ายหัวเอกสาร PDF';
  const headingInput=document.createElement('input');headingInput.id='rfi-document-name';headingInput.maxLength=80;headingInput.value='RITTA';headingInput.placeholder='RITTA';headingLabel.append(headingInput);
  const combineLabel=document.createElement('label');combineLabel.className='rfi-export-option';const combineInput=document.createElement('input');combineInput.type='checkbox';combineInput.id='rfi-include-combine';combineInput.checked=true;combineLabel.append(combineInput,document.createTextNode('แนบแปลน Combine พร้อม Cloud'));
@@ -32,7 +32,16 @@ export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
 
  const imageWarning=document.createElement('p');imageWarning.id='rfi-image-state';imageWarning.setAttribute('role','status');imageWarning.style.color='#fbbf24';
  const updateImage=document.createElement('button');updateImage.textContent='อัปเดตภาพจากแบบปัจจุบัน';updateImage.id='rfi-update-image';$('rfi-preview').after(imageWarning,updateImage);
- const checkImage=()=>{const item=chosen();imageWarning.hidden=!item;updateImage.hidden=!item;if(!item)return;const state=imageState(getProject(),item,engine);imageWarning.textContent=item.reviewRequired|| (state==='stale'?'แบบหรือการแสดงผลเปลี่ยนหลังแนบภาพ กรุณาตรวจและอัปเดตภาพก่อนส่ง':state==='unknown'?'ภาพเดิมยังไม่มีข้อมูลตรวจความเปลี่ยนแปลง กรุณาตรวจหรืออัปเดตภาพ':'ภาพตรงกับสถานะที่บันทึกไว้');};
+ const checkImage=()=>{
+  const item=chosen();imageWarning.hidden=!item;updateImage.hidden=!item;if(!item)return;
+  const state=imageState(getProject(),item,engine);
+  imageWarning.textContent=item.reviewRequired||
+   (state==='stale'?'แบบหรือการแสดงผลเปลี่ยนหลังแนบภาพ กรุณาตรวจและอัปเดตภาพก่อนส่ง':
+    state==='unknown'?'ภาพเดิมยังไม่มีข้อมูลตรวจความเปลี่ยนแปลง กรุณาตรวจหรืออัปเดตภาพ':
+    item.cropCloudVersion!==RFI_PDF_CLOUD_IMAGE_VERSION&&!canRenderCurrentRfiImage(engine,item)?
+    'ภาพ Cloud รุ่นเก่ายังอัปเดตไม่ได้ กรุณารอให้แบบโหลดครบหรือกดอัปเดตภาพจากแบบปัจจุบัน':
+    'ภาพตรงกับสถานะที่บันทึกไว้');
+ };
  updateImage.onclick=async()=>{const item=chosen();if(!item)return;if(getProject()?.calibration)return toast('จบ Calibrate ก่อนอัปเดตภาพ',true);if(navigate&&!navigate(item))return;const r=screenRect(item.rect);if(r.x<0||r.y<0||r.x+r.w>engine.width||r.y+r.h>engine.height)return toast('ซูมออกให้เห็น Cloud ครบก่อนอัปเดต',true);updateImage.disabled=true;try{await commitCloud(r,item,item.showDimensions!==false);}finally{updateImage.disabled=false;checkImage();}};
 
  const dimensionLabel=document.createElement('label');dimensionLabel.className='rfi-dimension-toggle';const dimensionToggle=document.createElement('input');dimensionToggle.type='checkbox';dimensionToggle.id='rfi-dimensions';dimensionToggle.disabled=true;dimensionLabel.append(dimensionToggle,document.createTextNode(' แสดง Dimension / ลูกศรใน RFI'));dimensionLabel.title='อัปเดตภาพจากแผ่นที่แสดงอยู่ในปัจจุบัน';$('rfi-preview').before(dimensionLabel);
@@ -47,12 +56,37 @@ export function installRfi({engine,getProject,mutate,schedule,toast,navigate}){
  const stop=()=>{armed=false;drag=null;editing=null;$('rfi-resize-actions').hidden=true;$('rfi-cloud').setAttribute('aria-pressed','false');engine.cursor();engine.render();};
  engine.tools?.register('cloud',()=>{selectedCloud=null;const id=drag?.id;stop();if(id!==undefined&&canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);});
  $('rfi-cloud').onclick=()=>{const p=getProject();if(!p?.layers.length||p.calibration)return;const next=!armed;engine.tools?.activate('cloud');p.panMode=false;armed=next;$('rfi-cloud').setAttribute('aria-pressed',String(armed));canvas.style.cursor=armed?'crosshair':'default';};
- function enlargePreview(){const item=chosen();if(!item?.image)return;const dialog=document.createElement('dialog');dialog.className='rfi-image-dialog';dialog.setAttribute('aria-label','ตรวจภาพ RFI และหัวกริด');const heading=document.createElement('h2');heading.textContent='ภาพ RFI · ตรวจหัวกริด';const img=document.createElement('img');img.src=item.image;img.alt='ภาพเดียวกับที่แนบใน PDF';const close=document.createElement('button');close.textContent='ปิด';close.onclick=()=>dialog.close();dialog.append(heading,img,close);dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal();}
+ function enlargePreview(){const src=$('rfi-preview').getAttribute('src');if(!src)return;const dialog=document.createElement('dialog');dialog.className='rfi-image-dialog';dialog.setAttribute('aria-label','ตรวจภาพ RFI และหัวกริด');const heading=document.createElement('h2');heading.textContent='ภาพ RFI · ตรวจหัวกริด';const img=document.createElement('img');img.src=src;img.alt='ภาพตัวอย่าง RFI ที่แสดงอยู่';const close=document.createElement('button');close.textContent='ปิด';close.onclick=()=>dialog.close();dialog.append(heading,img,close);dialog.addEventListener('close',()=>dialog.remove());document.body.append(dialog);dialog.showModal();}
  $('rfi-preview').onclick=enlargePreview;
  $('rfi-preview').onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();enlargePreview();}};
- $('rfi-close').onclick=()=>panel.hidden=true;
+ $('rfi-close').onclick=()=>{previewToken++;panel.hidden=true;};
  function chosen(){return (getProject()?.rfis||[]).find(r=>r.id===current);}
- function show(item){for(const [key,input]of Object.entries(formFields))input.value=item[key]||'';headingInput.value=item.documentName??'RITTA';combineInput.checked=item.includeCombine!==false;layersInput.checked=item.includeLayers===true;dimensionToggle.disabled=false;dimensionToggle.checked=item.showDimensions!==false;stop();current=item.id;panel.hidden=false;$('rfi-preview').src=item.image;$('rfi-preview').hidden=false;$('rfi-grid-warning').textContent=item.gridImageWarning||'';$('rfi-grid-warning').hidden=!item.gridImageWarning;$('rfi-sheet').textContent=item.sheetName;$('rfi-question').value=item.question||'';$('rfi-grid').value=item.gridLine||'';const legend=$('rfi-legend');legend.replaceChildren();for(const ref of item.references||[]){const row=document.createElement('p'),swatch=document.createElement('span');swatch.textContent='■ ';swatch.style.color=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';row.append(swatch,document.createTextNode(ref.name+(ref.color?'':' (สีต้นฉบับ)')));legend.append(row);}if(!item.references)legend.textContent='รายการเดิมไม่มีข้อมูล Layer ณ เวลาครอป';$('rfi-download').disabled=false;$('rfi-delete').disabled=false;checkImage();}
+ function show(item){for(const [key,input]of Object.entries(formFields))input.value=item[key]||'';headingInput.value=item.documentName??'RITTA';combineInput.checked=item.includeCombine!==false;layersInput.checked=item.includeLayers===true;dimensionToggle.disabled=false;dimensionToggle.checked=item.showDimensions!==false;stop();current=item.id;panel.hidden=false;$('rfi-preview').src=item.image;$('rfi-preview').hidden=false;$('rfi-grid-warning').textContent=item.gridImageWarning||'';$('rfi-grid-warning').hidden=!item.gridImageWarning;$('rfi-sheet').textContent=item.sheetName;$('rfi-question').value=item.question||'';$('rfi-grid').value=item.gridLine||'';const legend=$('rfi-legend');legend.replaceChildren();for(const ref of item.references||[]){const row=document.createElement('p'),swatch=document.createElement('span');swatch.textContent='■ ';swatch.style.color=/^#[0-9a-f]{6}$/i.test(ref.color||'')?ref.color:'#94a3b8';row.append(swatch,document.createTextNode(ref.name+(ref.color?'':' (สีต้นฉบับ)')));legend.append(row);}if(!item.references)legend.textContent='รายการเดิมไม่มีข้อมูล Layer ณ เวลาครอป';$('rfi-download').disabled=false;$('rfi-delete').disabled=false;checkImage();
+ const token=++previewToken;
+ if(item.cropCloudVersion!==RFI_PDF_CLOUD_IMAGE_VERSION&&imageState(getProject(),item,engine)==='current'){
+  if(previewCache?.item===item&&previewCache.source===item.image&&previewCache.state===item.captureState)
+   $('rfi-preview').src=previewCache.image;
+  else{
+   imageWarning.textContent='กำลังปรับ Cloud ในภาพตัวอย่าง…';
+   const started=Date.now();
+   const draw=()=>{
+    if(token!==previewToken||panel.hidden||chosen()!==item)return;
+    if(!canRenderCurrentRfiImage(engine,item)){
+     if(Date.now()-started<3000)window.setTimeout(draw,250);
+     else checkImage();
+     return;
+    }
+    try{
+     const image=renderCurrentRfiImage(engine,item);
+     previewCache={item,source:item.image,state:item.captureState,image};
+     $('rfi-preview').src=image;checkImage();
+    }catch(error){imageWarning.textContent='อัปเดตภาพตัวอย่างไม่ได้: '+error.message;}
+   };
+   if(typeof window.requestIdleCallback==='function')window.requestIdleCallback(draw,{timeout:800});
+   else window.setTimeout(draw,50);
+  }
+ }
+}
  $('rfi-list').onchange=()=>{const item=(getProject().rfis||[]).find(r=>r.id===$('rfi-list').value);if(item)show(item);};
  $('rfi-open').onclick=()=>{const opening=panel.hidden;refresh();panel.hidden=!opening;if(opening){const item=chosen()||(getProject()?.rfis||[])[0];if(item){show(item);$('rfi-list').value=item.id;}}};
  engine.refreshRfi=()=>refresh();
@@ -85,10 +119,21 @@ if(getProject()!==p)return;await mutate(target?'ปรับขนาดเม�
  canvas.addEventListener('pointercancel',()=>stop());window.addEventListener('blur',stop);window.addEventListener('keydown',e=>{if(e.key==='Escape')stop();});
  engine.drawMarkup=()=>{const p=getProject();if(!p)return;if(p.calibration)return;const ctx=engine.ctx;ctx.save();ctx.setTransform(engine.dpr,0,0,engine.dpr,0,0);for(const item of p.rfis||[]){if(item.sheetId!==p.selectedId||item.id===editing?.id)continue;const r=item.rect,c=p.camera;if(item.id===selectedCloud){ctx.strokeStyle="#f59e0b";ctx.lineWidth=2;ctx.strokeRect(r.x*c.zoom+c.x-4,r.y*c.zoom+c.y-4,r.w*c.zoom+8,r.h*c.zoom+8);}cloud(ctx,{x:r.x*c.zoom+c.x,y:r.y*c.zoom+c.y,w:r.w*c.zoom,h:r.h*c.zoom});}if(editing&&editing.project===p){const box=drag?.resize?rect():screenRect(editing.rect);cloud(ctx,box);ctx.fillStyle='#38bdf8';for(const [x,y] of [[box.x,box.y],[box.x+box.w,box.y],[box.x+box.w,box.y+box.h],[box.x,box.y+box.h]])ctx.fillRect(x-5,y-5,10,10);}else if(drag)cloud(ctx,rect());ctx.restore();};
 }
+function canRenderCurrentRfiImage(engine,item){
+ const p=engine?.p;
+ if(item.cropCloudVersion===RFI_PDF_CLOUD_IMAGE_VERSION||!p?.camera||p.calibration||!item.sheetId||
+    !p.layers.some(layer=>layer.id===item.sheetId)||imageState(p,item,engine)!=='current')return false;
+ const compare=engine.comparisonMode&&engine.comparisonMode!=='normal'&&item.sheetId!==p.baseId;
+ const layers=p.layers.filter(layer=>compare?(layer.id===p.baseId||layer.id===item.sheetId):layer.visible);
+ if(layers.some(layer=>!engine.cache?.get(layer.assetId)?.source))return false;
+ if(item.gridImageSource&&!p.layers.some(layer=>layer.name===item.gridImageSource&&
+    layer.gridBands?.top&&layer.gridBands?.side&&engine.cache?.get(layer.assetId)?.source))return false;
+ return true;
+}
 function renderCurrentRfiImage(engine,item){
  const p=engine.p,camera=p.camera,rect=item.rect,pad=12;
  const region={x:rect.x*camera.zoom+camera.x-pad,y:rect.y*camera.zoom+camera.y-pad,w:rect.w*camera.zoom+pad*2,h:rect.h*camera.zoom+pad*2};
- const {canvas:crop,scale}=renderRfiCrop(engine,region,{showDimensions:item.showDimensions!==false});
+ const {canvas:crop,scale}=renderRfiCrop(engine,region,{showDimensions:item.showDimensions!==false,selectedId:item.sheetId});
  let framed=crop;
  try{
   const ctx=crop.getContext('2d');ctx.scale(scale,scale);
@@ -121,7 +166,9 @@ export async function exportRfi(item,{engine}={}){
  if(item.keyPlan){const key=new Image();key.src=item.keyPlan;await key.decode();const s=Math.min(300/key.width,210/key.height);ctx.drawImage(key,1130+(300-key.width*s)/2,10,key.width*s,key.height*s);ctx.save();ctx.font='24px Arial';ctx.textAlign='center';ctx.fillText('KEY PLAN',1280,248);ctx.restore();}
  else{ctx.save();ctx.font='24px Tahoma';ctx.fillText('ยังไม่มี Key Plan',1130,74);ctx.fillText('กรุณาอัปเดตภาพ RFI',1130,110);ctx.restore();}
  let cropImage=item.image;
- if(item.cropCloudVersion!==RFI_PDF_CLOUD_IMAGE_VERSION&&engine?.p?.camera&&!engine.p.calibration&&item.sheetId&&engine.p.selectedId===item.sheetId&&imageState(engine.p,item,engine)==='current'){
+ if(item.cropCloudVersion!==RFI_PDF_CLOUD_IMAGE_VERSION&&engine?.p&&imageState(engine.p,item,engine)==='current'&&!canRenderCurrentRfiImage(engine,item))
+  throw Error('ยังโหลดภาพแผ่น RFI ไม่ครบ กรุณารอหรือกดอัปเดตภาพจากแบบปัจจุบันก่อนดาวน์โหลด PDF');
+ if(canRenderCurrentRfiImage(engine,item)){
   cropImage=renderCurrentRfiImage(engine,item);
  }
  const img=new Image();img.src=cropImage;await img.decode();

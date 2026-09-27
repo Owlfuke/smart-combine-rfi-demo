@@ -6,8 +6,8 @@ export function orthogonalPoint(start,end,axis='auto'){
  return horizontal?{x:end.x,y:start.y}:{x:start.x,y:end.y};
 }
 export const measuredDistance=(a,b,scale)=>Math.hypot(b.x-a.x,b.y-a.y)*scale;
-export function drawMeasures(engine,ctx,region={x:0,y:0},density=1){
- const p=engine.p,l=p?.layers.find(l=>l.id===p.selectedId);if(!l||!l.visible)return;const cam=p.camera;
+export function drawMeasures(engine,ctx,region={x:0,y:0},density=1,selectedId=engine.p?.selectedId){
+ const p=engine.p,l=p?.layers.find(l=>l.id===selectedId);if(!l||!l.visible)return;const cam=p.camera;
  const point=a=>{const w=map(l.transform,a);return {x:(w.x*cam.zoom+cam.x-region.x)*density,y:(w.y*cam.zoom+cam.y-region.y)*density};};
 
  for(const m of l.measurements||[]){const a=point(m.a),b=point(m.b),angle=Math.atan2(b.y-a.y,b.x-a.x);ctx.save();ctx.strokeStyle=ctx.fillStyle='#0369a1';ctx.lineWidth=2*density;ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();
