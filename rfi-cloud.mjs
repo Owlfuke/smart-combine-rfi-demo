@@ -2,11 +2,13 @@
 export const RFI_PDF_CLOUD_STROKE=6;
 export const PLAN_PDF_CLOUD_STROKE=3;
 export const PLAN_PDF_CLOUD_SHAPE=Object.freeze({step:18,bulge:.5});
-export const RFI_PDF_CLOUD_IMAGE_VERSION=4;
+export const RFI_PDF_CLOUD_IMAGE_VERSION=5;
 
-// Small crops are enlarged on A4, so use more scallops along their short edge.
+// Size the scallops by the crop, so enlarging a small crop on A4 does not
+// turn its cloud into a handful of oversized arcs. Cap very long edges too.
 export function rfiPdfCloudShape(rect){
- return {step:Math.min(18,Math.max(4,Math.min(rect.w,rect.h)/8)),bulge:.5};
+ const shortEdge=Math.min(rect.w,rect.h),longEdge=Math.max(rect.w,rect.h);
+ return {step:Math.max(1,shortEdge/18,longEdge/160),bulge:.5};
 }
 
 export function cloud(ctx,r,lineWidth=2.5,{step=18,bulge=.5}={}){
