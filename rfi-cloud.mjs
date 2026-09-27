@@ -1,7 +1,7 @@
 // The RFI form shrinks a high-resolution crop more than the full-plan pages.
 export const RFI_PDF_CLOUD_STROKE=6;
 export const PLAN_PDF_CLOUD_STROKE=3;
-export const PLAN_PDF_CLOUD_SHAPE=Object.freeze({step:18,bulge:.5});
+export const PLAN_PDF_CLOUD_SHAPE=Object.freeze({step:9,bulge:.5});
 export const RFI_PDF_CLOUD_IMAGE_VERSION=5;
 
 // Size the scallops by the crop, so enlarging a small crop on A4 does not
