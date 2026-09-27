@@ -151,7 +151,9 @@ export async function exportRfi(item,{engine}={}){
  await document.fonts.ready;
  const {jsPDF}=window.jspdf||{};if(!jsPDF)throw Error('ไม่พบ jsPDF ในโปรแกรม');
  const sourceProject=engine?.p;
- const pdf=new jsPDF({unit:'mm',format:'a4'}),width=1440,height=2160;
+ // jsPDF otherwise embeds each PNG as raw RGB (the A4 form alone can exceed 35 MB).
+ // Flate keeps fine drawing text and Cloud lines lossless while shrinking the PDF.
+ const pdf=new jsPDF({unit:'mm',format:'a4',compress:true}),width=1440,height=2160;
  let c,ctx,y,separators=[];
  // Two display steps larger than the previous form. Keep one shared body size so
  // labels, questions, answers and respondent details remain visually consistent.
