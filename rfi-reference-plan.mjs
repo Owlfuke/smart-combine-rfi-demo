@@ -52,8 +52,8 @@ export function drawQuestionCallout(ctx,box,question,{outset=0}={}){
  const font=Math.max(6,Math.min(30,Math.max(11,width*.009),box.w*.12,box.h*.22));
  const pad=Math.max(2,Math.ceil(font*.45)),gap=font*.6;
  ctx.save();ctx.font=font+'px Tahoma, sans-serif';ctx.textBaseline='top';
- const x=Math.max(1,Math.min(width-2,box.x+pad));
- const boxWidth=Math.max(1,Math.min(box.w-pad*2,width*.36,width-x-1));
+ const boxWidth=Math.max(1,Math.min(box.w*2,width-2));
+ const x=Math.max(1,Math.min(box.x+pad,width-boxWidth-1));
  const textWidth=Math.max(1,boxWidth-pad*2);
  const lineHeight=font*1.25,maxLines=Math.max(1,Math.min(12,Math.floor(height*.32/lineHeight)));
  let lines=questionLines(ctx,question,textWidth,maxLines);
@@ -67,7 +67,6 @@ export function drawQuestionCallout(ctx,box,question,{outset=0}={}){
   boxHeight=lines.length*lineHeight+pad*2;
   y=Math.max(1,Math.min(height-boxHeight-1,box.y+box.h-outset-gap-boxHeight));
  }
- ctx.fillStyle='rgba(255,255,255,.96)';ctx.fillRect(x,y,boxWidth,boxHeight);
  ctx.fillStyle='#dc2626';
  lines.forEach((line,i)=>ctx.fillText(line,x+pad,y+pad+i*lineHeight));
  ctx.restore();
