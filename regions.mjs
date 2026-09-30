@@ -11,6 +11,43 @@ export function searchRegion(r,column=false){
 export function drawingCodes(boxes){
  return [...new Set(groupLines(boxes).flatMap(b=>b.text.toUpperCase().replace(/[–—−]/g,'-').replace(/\s*-\s*/g,'-').match(/[A-Z]{1,8}(?:-[A-Z0-9]{1,12}){1,5}/g)||[]).filter(v=>/\d/.test(v)))];
 }
+export function titleReading(boxes){
+ const lines=groupLines(boxes).map(b=>b.text.replace(/^(?:DRAWING\s*TITLE|SHEET\s*TITLE|ชื่อแบบ)\s*[:：-]?\s*/i,'').trim()).filter(Boolean);
+ return cleanField('title',lines.join(' ')).value;
+}
+export function titleIsReadable(value){
+ if(!value||/[\uFFFD\u0000-\u001F@#{}\\|]/.test(value))return false;
+ const thai=(value.match(/[ก-๙]/g)||[]).length;
+ if(thai>=4)return thai/value.replace(/\s/g,'').length>=.55;
+ if(thai)return false;
+ const letters=(value.match(/[A-Za-z]/g)||[]).length;
+ const digits=(value.match(/\d/g)||[]).length;
+ return letters>=4&&digits<=letters*.35&&/^[A-Za-z0-9][A-Za-z0-9\s.,()\-\/'&]+$/.test(value);
+}
+export function titleNeedsImageCheck(value){
+ if(!titleIsReadable(value))return true;
+ if(/[ก-๙]/.test(value))return false;
+ const letters=value.match(/[A-Za-z]/g)||[];
+ return (value.match(/[a-z]/g)||[]).length>letters.length*.6;
+}
+export function chooseTitleReading(pdfTitle,thaiTitle,mixedTitle){
+ const thai=thaiTitle?.trim()||'';
+ const mixed=mixedTitle?.trim()||'';
+ if(titleIsReadable(mixed)&&mixed.toLocaleLowerCase()===pdfTitle?.toLocaleLowerCase())return {value:pdfTitle,source:'ข้อความ PDF และ OCR ตรงกัน'};
+ if(titleIsReadable(thai)&&(thai.match(/[ก-๙]/g)||[]).length>=4)return {value:thai,source:'OCR ภาษาไทย'};
+ if(titleIsReadable(mixed))return {value:mixed,source:'OCR ภาพ'};
+ if(titleIsReadable(pdfTitle))return {value:pdfTitle,source:'ข้อความ PDF'};
+ return {value:'',source:'อ่านไม่ชัด · กรุณากรอกชื่อแบบเอง'};
+}
+export async function readTitleImage(image,reader,signal,pdfTitle,labelBottom=0){
+ const mixedWords=await reader.ocr(image,signal,false,true);
+ const mixedTitle=titleReading(mixedWords);
+ const label=mixedWords.find(b=>/^(?:DRAWING\s*TITLE|SHEET\s*TITLE)\b/i.test(b.text));
+ const cutoff=Math.max(labelBottom,label?.y+label?.h||0);
+ const thaiWords=await reader.ocr(image,signal,'thai',true);
+ const thaiTitle=titleReading(thaiWords.filter(b=>/[ก-๙]/.test(b.text)&&b.y+b.h/2>cutoff));
+ return chooseTitleReading(pdfTitle,thaiTitle,mixedTitle);
+}
 export async function regionImage(item,r,signal,max=1800){
  check(signal);
  const c=document.createElement("canvas");
@@ -83,6 +120,18 @@ export async function readRegions(item,template,reader,signal){
     else if(codes.length>1){selected=[];result.quality.number="พบเลขแบบหลายค่า: "+codes.join(" / ")+" · กรุณากรอกยืนยัน";}
    }
    result.previews[field]=image.toDataURL();
+   if(field==="title"){
+    const pdfTitle=titleReading(selected);
+    if(!titleNeedsImageCheck(pdfTitle)){
+     result.fields.title=pdfTitle;result.quality.title='ข้อความ PDF · ตรวจเทียบภาพ';
+    }else{
+     const label=selected.find(b=>/^(?:(?:DRAWING|SHEET)\s*TITLE)\b|^ชื่อแบบ/i.test(b.text));
+     const labelBottom=label?(label.y+label.h-r.y)/r.h:0;
+     const picked=await readTitleImage(image,reader,signal,pdfTitle,labelBottom);
+     result.fields.title=picked.value;result.quality.title=picked.source+' · ตรวจเทียบภาพก่อนยืนยัน';
+    }
+    continue;
+   }
    if(field!=="number"&&(!selected.length||selected.some(b=>/[\uFFFD\u0000-\u0008]/.test(b.text)))){
     const words=await reader.ocr(image,signal,field==="number");
     selected=words.map(b=>({...b,x:r.x+b.x*r.w,y:r.y+b.y*r.h,w:b.w*r.w,h:b.h*r.h}));
