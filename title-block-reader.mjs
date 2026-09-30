@@ -42,13 +42,13 @@ export class TitleBlockReader{
  async ocr(canvas,signal,numberOnly=false,raw=false){
    const operation=(async()=>{
      const worker=await this.getWorker(signal);ensure(signal);
-     const language=numberOnly==="thai"?"tha":"eng+tha";if((this.language||"eng+tha")!==language){await worker.reinitialize(language);this.language=language;}if(numberOnly==="thai")numberOnly=false;
+     const language=numberOnly==="thai"?"tha":numberOnly==="english"?"eng":"eng+tha";if((this.language||"eng+tha")!==language){await worker.reinitialize(language);this.language=language;}if(numberOnly==="thai"||numberOnly==="english")numberOnly=false;
      await worker.setParameters({tessedit_pageseg_mode:numberOnly&&!raw?"6":"11",tessedit_char_whitelist:numberOnly?"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./ ":""});ensure(signal);
      const prepared=raw?crop(canvas,{x:0,y:0,w:1,h:1},2400):removeTableRules(canvas);const ocrWidth=prepared.width,ocrHeight=prepared.height;let data;try{({data}=await worker.recognize(prepared,{}, {text:true,blocks:true}));}finally{prepared.width=prepared.height=0;}ensure(signal);
      const words=[];
      for(const block of data.blocks||[])for(const paragraph of block.paragraphs||[])for(const line of paragraph.lines||[])for(const word of line.words||[]){
        if(!numberOnly&&word.confidence<25&&!/[ก-๙]/.test(word.text)&&!/^\d{1,4}$/.test(word.text))continue;
-       const b=word.bbox;words.push({text:word.text,x:b.x0/ocrWidth,y:(line.bbox?.y0??b.y0)/ocrHeight,w:(b.x1-b.x0)/ocrWidth,h:((line.bbox?.y1??b.y1)-(line.bbox?.y0??b.y0))/ocrHeight});
+       const b=word.bbox;words.push({text:word.text,confidence:word.confidence,x:b.x0/ocrWidth,y:(line.bbox?.y0??b.y0)/ocrHeight,w:(b.x1-b.x0)/ocrWidth,h:((line.bbox?.y1??b.y1)-(line.bbox?.y0??b.y0))/ocrHeight});
      }
      return words;
    })();
@@ -99,7 +99,7 @@ export class TitleBlockReader{
        this.progress("ตรวจชื่อแบบจากภาพภาษาไทย");
        const x=Math.max(0,label.x-.01),y=Math.max(0,label.y-.01);
        const next=lines.filter(b=>b.y>label.y+label.h&&/^(?:DRAWING\s*(?:NO|NUMBER)|DWG\s*NO|REVISION|SCALE|หมายเลขแบบ|เลขที่แบบ|มาตราส่วน)/i.test(b.text)).sort((a,b)=>a.y-b.y)[0];
-       const bottom=Math.min(1,next?next.y-.005:label.y+Math.max(.18,label.h*8));
+       const bottom=Math.min(1,next?next.y+Math.max(.035,next.h):label.y+Math.max(.22,label.h*10));
        const region={x,y,w:Math.min(1-x,Math.max(.35,label.w*2.5)),h:Math.max(.05,bottom-y)};
        const image=await regionImage(item,region,signal);
        try{

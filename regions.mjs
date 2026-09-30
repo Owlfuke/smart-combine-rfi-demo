@@ -18,7 +18,10 @@ export function titleReading(boxes){
 export function titleIsReadable(value){
  if(!value||/[\uFFFD\u0000-\u001F@#{}\\|]/.test(value))return false;
  const thai=(value.match(/[ก-๙]/g)||[]).length;
- if(thai>=4)return thai/value.replace(/\s/g,'').length>=.55;
+ if(thai>=4){
+  const share=thai/value.replace(/\s/g,'').length;
+  return share>=.55||share>=.1&&/[A-Za-z]{4,}/.test(value)&&/^[A-Za-z0-9ก-๙\s+.,()\-\/'&]+$/.test(value);
+ }
  if(thai)return false;
  const letters=(value.match(/[A-Za-z]/g)||[]).length;
  const digits=(value.match(/\d/g)||[]).length;
@@ -26,27 +29,45 @@ export function titleIsReadable(value){
 }
 export function titleNeedsImageCheck(value){
  if(!titleIsReadable(value))return true;
- if(/[ก-๙]/.test(value))return false;
+ if(/[ก-๙\d]/.test(value))return true;
  const letters=value.match(/[A-Za-z]/g)||[];
  return (value.match(/[a-z]/g)||[]).length>letters.length*.6;
 }
-export function chooseTitleReading(pdfTitle,thaiTitle,mixedTitle){
+export function chooseTitleReading(pdfTitle,thaiTitle,mixedTitle,hybridTitle=''){
  const thai=thaiTitle?.trim()||'';
  const mixed=mixedTitle?.trim()||'';
  if(titleIsReadable(mixed)&&mixed.toLocaleLowerCase()===pdfTitle?.toLocaleLowerCase())return {value:pdfTitle,source:'ข้อความ PDF และ OCR ตรงกัน'};
+ if(titleIsReadable(hybridTitle))return {value:hybridTitle,source:'OCR ไทย/อังกฤษ/ตัวเลข'};
+ if(titleIsReadable(mixed)&&/[ก-๙]/.test(mixed)&&/(?:[A-Za-z]{4,}|\+?\d+\.\d+)/.test(mixed))return {value:mixed,source:'OCR ไทยและอังกฤษ · ตรวจคำผสม'};
  if(titleIsReadable(thai)&&(thai.match(/[ก-๙]/g)||[]).length>=4)return {value:thai,source:'OCR ภาษาไทย'};
  if(titleIsReadable(mixed))return {value:mixed,source:'OCR ภาพ'};
  if(titleIsReadable(pdfTitle))return {value:pdfTitle,source:'ข้อความ PDF'};
  return {value:'',source:'อ่านไม่ชัด · กรุณากรอกชื่อแบบเอง'};
 }
+export function combineTitleWords(thaiWords,mixedWords,englishWords,labelBottom=0,contentBottom=1){
+ const sameLine=(a,b)=>Math.abs(a.y+a.h/2-b.y-b.h/2)<Math.max(a.h,b.h)*.6;
+ const protectedWords=mixedWords.filter(word=>{
+  const value=word.text.trim();
+  if(word.y+word.h/2<=labelBottom||word.y+word.h/2>=contentBottom||word.confidence<60||!/^(?:[A-Za-z]{3,}|\+?\d+(?:\.\d+)+)$/.test(value))return false;
+  return englishWords.some(other=>other.confidence>=55&&other.text.trim().toUpperCase()===value.toUpperCase()&&sameLine(word,other));
+ });
+ const thai=thaiWords.filter(word=>/[ก-๙]/.test(word.text)&&word.y+word.h/2>labelBottom&&word.y+word.h/2<contentBottom&&!protectedWords.some(other=>
+  sameLine(word,other)&&Math.min(word.x+word.w,other.x+other.w)-Math.max(word.x,other.x)>Math.min(word.w,other.w)*.2));
+ return titleReading([...thai,...protectedWords]);
+}
 export async function readTitleImage(image,reader,signal,pdfTitle,labelBottom=0){
  const mixedWords=await reader.ocr(image,signal,false,true);
- const mixedTitle=titleReading(mixedWords);
+ const next=groupLines(mixedWords).find(b=>/^(?:DRAWING\s*(?:NO|NUMBER)|DWG\s*NO|REVISION|SCALE|หมายเลขแบบ|เลขที่แบบ|มาตราส่วน)/i.test(b.text));
+ const contentBottom=next?.y??1;
+ const mixedTitle=titleReading(mixedWords.filter(b=>b.y+b.h/2<contentBottom));
+ if(titleIsReadable(pdfTitle)&&mixedTitle.toLocaleLowerCase()===pdfTitle.toLocaleLowerCase())return {value:pdfTitle,source:'ข้อความ PDF และ OCR ตรงกัน'};
  const label=mixedWords.find(b=>/^(?:DRAWING\s*TITLE|SHEET\s*TITLE)\b/i.test(b.text));
  const cutoff=Math.max(labelBottom,label?.y+label?.h||0);
  const thaiWords=await reader.ocr(image,signal,'thai',true);
- const thaiTitle=titleReading(thaiWords.filter(b=>/[ก-๙]/.test(b.text)&&b.y+b.h/2>cutoff));
- return chooseTitleReading(pdfTitle,thaiTitle,mixedTitle);
+ const thaiTitle=titleReading(thaiWords.filter(b=>/[ก-๙]/.test(b.text)&&b.y+b.h/2>cutoff&&b.y+b.h/2<contentBottom));
+ const englishWords=await reader.ocr(image,signal,'english',true);
+ const hybridTitle=combineTitleWords(thaiWords,mixedWords,englishWords,cutoff,contentBottom);
+ return chooseTitleReading(pdfTitle,thaiTitle,mixedTitle,hybridTitle);
 }
 export async function regionImage(item,r,signal,max=1800){
  check(signal);
