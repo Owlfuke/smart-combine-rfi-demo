@@ -11,7 +11,7 @@ export function overlayBounds(layers){
  return {x,y,w,h};
 }
 
-export function renderOverlay(engine,{includeAnnotations=false}={}){
+export function renderOverlay(engine,{includeAnnotations=false,includeTextMarkups=true}={}){
  const layers=[...engine.p.layers].reverse().filter(layer=>layer.visible&&layer.opacity>0);
  layers.sort((a,b)=>a.id===engine.p.baseId?-1:b.id===engine.p.baseId?1:0);
  const bounds=overlayBounds(layers),scale=Math.min(1,5000/Math.max(bounds.w,bounds.h),Math.sqrt(16000000/(bounds.w*bounds.h))),canvas=document.createElement('canvas');
@@ -22,7 +22,7 @@ export function renderOverlay(engine,{includeAnnotations=false}={}){
   ctx.save();ctx.setTransform(scale,0,0,scale,-bounds.x*scale,-bounds.y*scale);const transform=layer.transform;ctx.transform(transform.a,transform.b,transform.c,transform.d,transform.e,transform.f);ctx.globalAlpha=layer.opacity;ctx.globalCompositeOperation=layer.blend;ctx.drawImage(image,0,0);ctx.restore();
  }
  const camera={zoom:scale,x:-bounds.x*scale,y:-bounds.y*scale};
- for(const layer of layers)for(const item of layer.markups||[])drawMarkupItem(ctx,layer,camera,item);
+ for(const layer of layers)for(const item of layer.markups||[])if(includeTextMarkups||item.kind!=='text')drawMarkupItem(ctx,layer,camera,item);
  if(includeAnnotations){
   const selected=layers.find(layer=>layer.id===engine.p.selectedId);
   if(selected)drawMeasures({p:{...engine.p,camera}},ctx);

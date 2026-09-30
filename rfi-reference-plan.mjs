@@ -8,14 +8,14 @@ export function sourceLayerState(project){
  })));
 }
 
-// Keep the captured combined drawing unchanged. The cloud and question are
-// rendered at export time so an edited question never requires a new snapshot.
+// Keep the captured combined drawing and non-text markups unchanged. A text
+// markup would duplicate the RFI question drawn below the cloud at export.
 export function captureReferencePlan(engine,item){
- const canvas=renderOverlay(engine);
+ const canvas=renderOverlay(engine,{includeTextMarkups:false});
  try{
   item.referencePlanBounds=canvas.overlayBounds;
   item.referencePlanScale=canvas.overlayScale;
-  item.referencePlanFormat=2;
+  item.referencePlanFormat=3;
   return canvas.toDataURL('image/png');
  }finally{canvas.width=canvas.height=0;}
 }
@@ -49,10 +49,12 @@ function questionLines(ctx,text,maxWidth,maxLines){
 
 export function drawQuestionCallout(ctx,box,question,{outset=0}={}){
  const width=ctx.canvas.width,height=ctx.canvas.height;
- const font=Math.max(6,Math.min(30,Math.max(11,width*.009),box.w*.12,box.h*.22));
+ // A small cloud still needs a readable note on the full-size A3 attachment.
+ const font=Math.min(30,Math.max(10,width*.007));
  const pad=Math.max(2,Math.ceil(font*.45)),gap=font*.6;
  ctx.save();ctx.font=font+'px Tahoma, sans-serif';ctx.textBaseline='top';
- const boxWidth=Math.max(1,Math.min(box.w*2,width-2));
+ // Twice the cloud width is unreadably narrow for very small marked areas.
+ const boxWidth=Math.max(1,Math.min(Math.max(box.w*2,width*.12),width-2));
  const x=Math.max(1,Math.min(box.x+pad,width-boxWidth-1));
  const textWidth=Math.max(1,boxWidth-pad*2);
  const lineHeight=font*1.25,maxLines=Math.max(1,Math.min(12,Math.floor(height*.32/lineHeight)));
