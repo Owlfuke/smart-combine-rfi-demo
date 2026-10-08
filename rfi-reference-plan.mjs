@@ -51,28 +51,36 @@ export function drawQuestionCallout(ctx,box,question,{outset=0}={}){
  const width=ctx.canvas.width,height=ctx.canvas.height;
  // A small cloud still needs a readable note on the full-size A3 attachment.
  const font=Math.min(30,Math.max(10,width*.007));
- const pad=Math.max(2,Math.ceil(font*.45)),gap=font*.6;
- ctx.save();ctx.font=font+'px Tahoma, sans-serif';ctx.textBaseline='top';
+ const pad=Math.max(2,Math.ceil(font*.25)),gap=font*.6;
+ ctx.save();ctx.font=font+'px Tahoma, sans-serif';ctx.textBaseline='top';ctx.textAlign='left';
  // Twice the cloud width is unreadably narrow for very small marked areas.
  const boxWidth=Math.max(1,Math.min(Math.max(box.w*2,width*.12),width-2));
  const x=Math.max(1,Math.min(box.x+pad,width-boxWidth-1));
  const textWidth=Math.max(1,boxWidth-pad*2);
  const lineHeight=font*1.25,maxLines=Math.max(1,Math.min(12,Math.floor(height*.32/lineHeight)));
  let lines=questionLines(ctx,question,textWidth,maxLines);
- let boxHeight=lines.length*lineHeight+pad*2;
+ const heightFor=count=>(count-1)*lineHeight+font+pad*2;
+ let boxHeight=heightFor(lines.length);
  const below=box.y+box.h+outset+gap;
  let y;
  if(below+boxHeight<=height-1)y=below;
  else{
   const fit=Math.max(1,Math.floor((box.h-gap-pad*2)/lineHeight));
   lines=questionLines(ctx,question,textWidth,Math.min(maxLines,fit));
-  boxHeight=lines.length*lineHeight+pad*2;
+  boxHeight=heightFor(lines.length);
   y=Math.max(1,Math.min(height-boxHeight-1,box.y+box.h-outset-gap-boxHeight));
  }
+ // Mask drawing lines behind the note so Thai text remains readable on dense plans.
+ ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
+ // The wrapping limit is not the painted width. Mask only occupied lines,
+ // preserving drawing details next to short lines and in empty paragraphs.
+ const lineWidths=lines.map(line=>line.trim()?Math.min(boxWidth,Math.ceil(ctx.measureText(line).width)+pad*2):0);
+ ctx.fillStyle='#ffffff';
+ lineWidths.forEach((lineWidth,i)=>{if(lineWidth)ctx.fillRect(x,y+i*lineHeight,lineWidth,font+pad*2);});
  ctx.fillStyle='#dc2626';
  lines.forEach((line,i)=>ctx.fillText(line,x+pad,y+pad+i*lineHeight));
  ctx.restore();
- return {x,y,w:boxWidth,h:boxHeight};
+ return {x,y,w:Math.max(...lineWidths),h:boxHeight};
 }
 
 function drawCombinedAnnotations(canvas,{rect,bounds,scale,question}){

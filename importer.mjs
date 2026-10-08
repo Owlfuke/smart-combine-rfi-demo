@@ -1,5 +1,7 @@
 import {editRegions} from "./region-editor.mjs";
-import {readRegions} from "./regions.mjs";
+import {readRegions,readTitleImage} from "./regions.mjs";
+import {completeReview,fieldsToReview,reviewField} from './ocr-review.mjs';
+import {renderFieldReview,reviewSummary,openOcrImage} from './ocr-review-ui.mjs';
 import {conflicts} from "./versions.mjs";
 import {LIMITS} from "./model.mjs";
 import {TitleBlockReader} from "./title-block-reader.mjs";
@@ -81,7 +83,7 @@ export class Importer{
     $("import-none").addEventListener("click",()=>{this.selected.clear();this.refreshChecks();});
     $("import-add").addEventListener("click",()=>this.reviewMode?this.commit():this.prepareReview());
     $("title-review-back").addEventListener("click",()=>{if(this.reviewing)return;this.setReviewMode(false);this.showBatch(this.batch);});
-    $("title-confirm-all").addEventListener("click",()=>{if(this.reviewing)return;for(const item of this.items.filter(item=>this.selected.has(item.key))){if(!this.canApprove(item))continue;item.meta.confirmed=true;item.meta.confirmedAt=Date.now();}this.renderReview();});
+    $("title-confirm-all").addEventListener("click",()=>{if(this.reviewing||this.compiling)return;const chosen=this.items.filter(item=>this.selected.has(item.key)&&this.canApprove(item));const unchecked=chosen.filter(item=>fieldsToReview(item.meta).length);if(unchecked.length&&!window.confirm('ยังมี '+unchecked.length+' แผ่นที่มีจุดต้องตรวจ OCR คุณได้เทียบค่ากับภาพแล้วและต้องการยืนยันทั้งหมดหรือไม่?'))return;for(const item of chosen){item.meta.confirmed=true;item.meta.confirmedAt=Date.now();}this.renderReview();});
   }
   currentProject(){const current=this.getProject?.()||this.project;if(current.id!==this.project.id)throw Error("โครงการเปลี่ยนระหว่างนำเข้า");return current;}
   progress(text,value,max){
@@ -197,10 +199,11 @@ export class Importer{
       const badge=document.createElement("span");badge.className="sheet-badge "+(!m?"processing":m.confirmed?"confirmed":duplicate?"conflict":"pending");
       badge.textContent=!m?(item.reading?"◌ กำลัง OCR":"◌ รอ OCR"):m.confirmed?"✓ ยืนยันแล้ว":duplicate?"⚠ Version conflict":"⚠ รอตรวจชื่อ";
       card.append(name,badge);card.addEventListener("click",()=>this.openSheet(item.key));grid.append(card);
+      if(m&&!m.confirmed){const review=document.createElement('small');review.className='ocr-queue-review';review.textContent=reviewSummary(m);card.append(review);}
     }
     $("ocr-queue-status").textContent="อ่านแล้ว "+ready+"/"+chosen.length+" · เลขแบบและ Revision ซ้ำ "+duplicates+" · รอยืนยัน "+chosen.filter(i=>i.meta&&!i.meta.confirmed).length;
     $("ocr-queue-commit").disabled=this.compiling||!chosen.some(i=>i.meta?.confirmed&&this.canApprove(i));
-    $("ocr-queue-confirm").disabled=this.reviewing;
+    $("ocr-queue-confirm").disabled=this.reviewing||this.compiling;
   }
 
   canApprove(item){
@@ -211,7 +214,7 @@ export class Importer{
     const chosen=(this.items||[]).filter(item=>this.selected.has(item.key));
     const count=chosen.filter(item=>item.meta?.confirmed&&this.canApprove(item)).length;
     $("title-review-count").textContent="ยืนยัน "+count+" / "+chosen.length+" หน้า · ตรวจเลขแบบซ้ำกับงานปัจจุบันก่อนยืนยัน";
-    $("title-confirm-all").disabled=this.reviewing||!chosen.length||chosen.some(item=>!item.meta?.title.trim());
+    $("title-confirm-all").disabled=this.reviewing||this.compiling||!chosen.length||chosen.some(item=>!item.meta?.title.trim());
     $("import-add").disabled=this.compiling||!count;
   }
   renderReview(){
@@ -230,13 +233,13 @@ export class Importer{
       for(const [key,label] of previewFields){
         const figure=document.createElement("figure");figure.dataset.previewField=key;
         const caption=document.createElement("figcaption");caption.textContent=label;figure.append(caption);
-        if(m.previews?.[key]){const image=document.createElement("img");image.src=m.previews[key];image.alt=label+" · ภาพพื้นที่อ่าน หน้า "+item.page;figure.append(image);}
+        if(m.previews?.[key]){const image=document.createElement("img");image.src=m.previews[key];image.alt=label+" · ภาพพื้นที่อ่าน หน้า "+item.page;figure.append(image);const zoom=document.createElement('button');zoom.type='button';zoom.className='ocr-image-zoom';zoom.textContent='ขยายภาพเพื่อตรวจ';zoom.onclick=()=>openOcrImage(m.previews[key],reviewField(m,key),label);figure.append(zoom);}
         else{const unavailable=document.createElement("p");unavailable.className="hint";unavailable.textContent="ไม่ได้กำหนดกรอบภาพสำหรับช่องนี้";figure.append(unavailable);}
         if(m.quality?.[key]){const note=document.createElement("small");note.textContent=m.quality[key];figure.append(note);}
         previews.append(figure);
       }
       visual.append(previews);
-      if(!m.previews&&m.previewUrl){const image=document.createElement("img");image.src=m.previewUrl;image.alt="ภาพรวม Title Block หน้า "+item.page;visual.append(image);}
+      if(m.previewUrl&&previewFields.some(([key])=>!m.previews?.[key])){const image=document.createElement("img");image.src=m.previewUrl;image.alt="ภาพรวม Title Block หน้า "+item.page;visual.append(image);}
 
       const note=document.createElement("p");note.className="hint";note.textContent=m.note;visual.append(note);
       if(item.regionTemplate?.regions?.revisionTable){
@@ -246,8 +249,22 @@ export class Importer{
         const reader=new TitleBlockReader(text=>{retry.textContent=text;});
         try{const found=await readRegions(item,{...item.regionTemplate,regions:{revisionTable:item.regionTemplate.regions.revisionTable}},reader,this.controller.signal);
          m.revision=found.fields.revision||'';m.revisionDate=found.fields.revisionDate||'';m.revisionHistory=found.revisionHistory||[];m.confirmed=false;
-         m.previews={...m.previews,...found.previews};m.quality={...m.quality,...found.quality};
+         m.previews={...m.previews,...found.previews};m.quality={...m.quality,...found.quality};m.review={...m.review,...found.review};
         }catch(e){if(e.name!=='AbortError')this.report(e.message);}finally{reader.stop();this.compiling=false;if(this.controller){this.renderReview();this.renderQueue();}}
+       });visual.append(retry);
+      }
+      if(m.previews?.title){
+       const retry=document.createElement('button');retry.type='button';retry.className='retry-title-ocr';retry.textContent='อ่านชื่อแบบจากภาพนี้อีกครั้ง';retry.disabled=this.reviewing||this.compiling;
+       retry.addEventListener('click',async()=>{
+        if(this.reviewing||this.compiling||!this.controller)return;
+        this.compiling=true;this.reviewStatus();this.renderQueue();retry.disabled=true;
+        for(const control of row.querySelectorAll('input,select,button'))control.disabled=true;
+        const reader=new TitleBlockReader(text=>{retry.textContent=text;});
+        const signal=this.controller.signal;let canvas;
+        try{const image=new Image();image.src=m.previews.title;await image.decode();check(signal);canvas=document.createElement('canvas');canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;canvas.getContext('2d').drawImage(image,0,0);
+         const picked=await readTitleImage(canvas,reader,signal,'');check(signal);
+         m.title=picked.value;m.quality={...m.quality,title:picked.source};m.review={...m.review,title:picked.review};m.confirmed=false;m.confirmedAt=null;
+        }catch(e){if(e.name!=='AbortError')this.report(e.message);}finally{reader.stop();if(canvas)canvas.width=canvas.height=0;this.compiling=false;if(this.controller)this.renderReview();}
        });visual.append(retry);
       }
       const fields=document.createElement("div");fields.className="title-review-fields";
@@ -264,16 +281,19 @@ export class Importer{
         summary.textContent=displayName(m);
         state.textContent=m.confirmed?"✓ ยืนยันแล้ว":"รอยืนยัน";
         approve.textContent=m.confirmed?"ยืนยันแล้ว":"ยืนยันชื่อนี้";
-        approve.disabled=m.confirmed||!this.canApprove(item);
+        approve.disabled=this.compiling||m.confirmed||!this.canApprove(item);
         row.classList.toggle("confirmed",!!m.confirmed);
+        for(const [key] of previewFields){const review=fields.querySelector('[data-review-field="'+key+'"]');if(review)renderFieldReview(review,m,key);}
         this.reviewStatus();this.renderQueue();const single=row.querySelector(".import-one-sheet");if(single)single.disabled=!this.canApprove(item)||this.compiling;
       };
       for(const [field,labelText,max] of [["number","เลขแบบ",60],["revision","ครั้งที่แก้ไข / Revision",40],["revisionDate","วันที่แก้ไข",60],["title","ชื่อแบบ",180]]){
         const label=document.createElement("label");label.textContent=labelText;
         const input=document.createElement("input");input.type="text";input.className="review-"+field;input.value=m[field]||"";input.maxLength=max;
+        input.disabled=this.compiling;
         input.placeholder=field==="revisionDate"?"ไม่พบวันที่แก้ไข / กรอกตามตาราง":field==="revision"?"ไม่พบ / ไม่ระบุ":field==="number"?"ไม่พบเลขแบบ กรุณาตรวจ":"กรอกชื่อแบบ";
         input.addEventListener("input",()=>{m[field]=input.value;if(field==="number")m.versionOf="";m.confirmed=false;m.confirmedAt=null;refresh();});
         if(field==="number")input.addEventListener("change",()=>this.renderReview());label.append(input);fields.append(label);
+        const review=document.createElement('div');review.className='ocr-field-review';review.dataset.reviewField=field;review.id='ocr-review-'+item.page+'-'+field;input.setAttribute('aria-describedby',review.id);fields.append(review);
       }
       approve.addEventListener("click",()=>{if(!this.canApprove(item))return;m.confirmed=true;m.confirmedAt=Date.now();refresh();});
       const skip=document.createElement("button");skip.textContent="ข้ามหน้านี้";skip.className="skip-import-page";skip.disabled=this.reviewing;skip.addEventListener("click",()=>{this.selected.delete(item.key);this.renderReview();});
@@ -311,17 +331,19 @@ export class Importer{
           this.report(item.doc.file.name+" หน้า "+item.page+" — "+e.message+" · ยังแก้ชื่อและยืนยันเองได้");
         }finally{if(c)c.width=c.height=0;}
         check(signal);
+        found=completeReview(found);
         const missing=["number","title","revision"].filter(key=>!found.fields[key]);
         item.meta={
           number:found.fields.number||$("import-number").value.trim(),
           revisionDate:found.fields.revisionDate||"",revisionHistory:found.revisionHistory||[],
           revision:item.regionTemplate?.regions?.revisionTable?(found.fields.revision||""):(found.fields.revision||$("import-revision").value.trim()||"0"),
           title:found.fields.title||(item.doc.file.name.replace(/\.[^.]+$/,"")+(item.doc.pages>1?" หน้า "+item.page:"")),
-          elapsedMs:found.elapsedMs,method:found.method,region:found.region,quality:found.quality,previewUrl:found.previewUrl,previews:found.previews,
+          elapsedMs:found.elapsedMs,method:found.method,region:found.region,quality:found.quality,previewUrl:found.previewUrl,previews:found.previews,review:found.review,
           note:(found.numberCandidates?.length?"ผลเลขแบบขัดกัน: "+found.numberCandidates.join(" / ")+" · ":"")+found.method+(found.elapsedMs?" · "+(found.elapsedMs/1000).toFixed(1)+" วินาที":"")+" · "+(found.region?.name||"ไม่พบบริเวณชัดเจน")+
             (missing.length?" · ต้องตรวจ: "+missing.map(key=>({number:"เลขแบบ",title:"ชื่อแบบ (ใช้ชื่อไฟล์ชั่วคราว)",revision:"Revision"}[key])).join(", "):" · โปรดตรวจเทียบภาพก่อนยืนยัน"),
           confirmed:false,confirmedAt:null
         };
+        for(const key of missing){item.meta.review[key]={...item.meta.review[key],value:item.meta[key],status:'missing',source:key==='title'?'ชื่อไฟล์ชั่วคราว · ยังอ่านชื่อแบบไม่ได้':'ค่าเริ่มต้น · ยังอ่านจากแบบไม่ได้',issues:['อ่านจากแบบไม่สำเร็จ · ตรวจภาพแล้วกรอกเอง']};}
         this.renderReview();await new Promise(resolve=>setTimeout(resolve,0));
       }
       check(signal);this.progress("อ่านครบแล้ว · ตรวจและยืนยันชื่อก่อนนำเข้า",chosen.length,chosen.length);
@@ -361,7 +383,7 @@ export class Importer{
           const blob=resized?await toBlob(c):(item.preparedBlob||(item.doc.type==="pdf"?await toBlob(c):item.doc.file));check(signal);
           assets.set(assetId,blob);assets.set(item.doc.id,item.doc.file);
           result.push({versionOf:item.meta.versionOf||conflicts(item,this.items,this.selected,this.currentProject().layers).existing[0]?.id||null,importedAt:Date.now(),name:displayName(item.meta),drawingTitle:item.meta.title.trim(),originalName:item.doc.file.name,
-            titleBlock:{method:item.meta.method,region:item.meta.region,quality:item.meta.quality,confirmed:true,confirmedAt:item.meta.confirmedAt},page:item.page,pageCount:item.doc.pages,fingerprint:item.doc.id,
+            titleBlock:{method:item.meta.method,region:item.meta.region,quality:item.meta.quality,review:item.meta.review,confirmed:true,confirmedAt:item.meta.confirmedAt},page:item.page,pageCount:item.doc.pages,fingerprint:item.doc.id,
             sourceId:item.doc.id,assetId,width:c.width,height:c.height,discipline:$("import-discipline").value,
             revisionDate:(item.meta.revisionDate||"").trim(),revisionHistory:item.meta.revisionHistory||[],number:item.meta.number.trim(),revision:item.meta.revision.trim()});
           successful.push(item.key);pixels+=c.width*c.height;

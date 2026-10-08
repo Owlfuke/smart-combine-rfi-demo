@@ -1,5 +1,6 @@
 
 import {pdfBoxes,groupLines,revisionTable} from "./title-block-parser.mjs";
+import {assessTitle,completeReview,overlapsWord,sameReading} from './ocr-review.mjs';
 export const fields={number:"เลขแบบ",revision:"ครั้งที่แก้ไข / Revision",revisionDate:"วันที่แก้ไข",title:"ชื่อแบบ",revisionTable:"ตาราง Revision ทั้งตาราง"};
 const check=s=>{if(s.aborted)throw new DOMException("ยกเลิก","AbortError");};
 export function inRegion(b,r){return b.x+b.w/2>=r.x&&b.x+b.w/2<=r.x+r.w&&b.y+b.h/2>=r.y&&b.y+b.h/2<=r.y+r.h;}
@@ -44,30 +45,45 @@ export function chooseTitleReading(pdfTitle,thaiTitle,mixedTitle,hybridTitle='')
  if(titleIsReadable(pdfTitle))return {value:pdfTitle,source:'ข้อความ PDF'};
  return {value:'',source:'อ่านไม่ชัด · กรุณากรอกชื่อแบบเอง'};
 }
-export function combineTitleWords(thaiWords,mixedWords,englishWords,labelBottom=0,contentBottom=1){
- const sameLine=(a,b)=>Math.abs(a.y+a.h/2-b.y-b.h/2)<Math.max(a.h,b.h)*.6;
+export function combinedTitleWords(thaiWords,mixedWords,englishWords,labelBottom=0,contentBottom=1){
  const protectedWords=mixedWords.filter(word=>{
   const value=word.text.trim();
-  if(word.y+word.h/2<=labelBottom||word.y+word.h/2>=contentBottom||word.confidence<60||!/^(?:[A-Za-z]{3,}|\+?\d+(?:\.\d+)+)$/.test(value))return false;
-  return englishWords.some(other=>other.confidence>=55&&other.text.trim().toUpperCase()===value.toUpperCase()&&sameLine(word,other));
+  if(word.y+word.h/2<=labelBottom||word.y+word.h/2>=contentBottom||word.confidence<60||!/^(?:[A-Za-z]{2,}(?:[0-9][A-Za-z0-9.-]*)?|[+-]?\d+(?:\.\d+)*)[.,:]?$/.test(value))return false;
+  return englishWords.some(other=>other.confidence>=55&&sameReading(other.text,value)&&overlapsWord(word,other));
  });
- const thai=thaiWords.filter(word=>/[ก-๙]/.test(word.text)&&word.y+word.h/2>labelBottom&&word.y+word.h/2<contentBottom&&!protectedWords.some(other=>
-  sameLine(word,other)&&Math.min(word.x+word.w,other.x+other.w)-Math.max(word.x,other.x)>Math.min(word.w,other.w)*.2));
- return titleReading([...thai,...protectedWords]);
+ // Mixed-language OCR often reads RB1 as 881. Keep the English image reading
+ // when it occupies the same word box; the disagreement remains flagged for review.
+ const technicalWords=englishWords.filter(word=>word.confidence>=70&&/^[A-Za-z]{1,8}\d+[A-Za-z0-9.-]*$/.test(word.text.trim())&&word.y+word.h/2>labelBottom&&word.y+word.h/2<contentBottom&&mixedWords.some(other=>overlapsWord(word,other))&&!protectedWords.some(other=>overlapsWord(word,other)));
+ const retainedWords=[...protectedWords,...technicalWords];
+ const thai=thaiWords.filter(word=>/[ก-๙]/.test(word.text)&&word.y+word.h/2>labelBottom&&word.y+word.h/2<contentBottom&&!retainedWords.some(other=>
+  overlapsWord(word,other)));
+ return [...thai,...retainedWords];
+}
+export function combineTitleWords(thaiWords,mixedWords,englishWords,labelBottom=0,contentBottom=1){
+ return titleReading(combinedTitleWords(thaiWords,mixedWords,englishWords,labelBottom,contentBottom));
 }
 export async function readTitleImage(image,reader,signal,pdfTitle,labelBottom=0){
  const mixedWords=await reader.ocr(image,signal,false,true);
- const next=groupLines(mixedWords).find(b=>/^(?:DRAWING\s*(?:NO|NUMBER)|DWG\s*NO|REVISION|SCALE|หมายเลขแบบ|เลขที่แบบ|มาตราส่วน)/i.test(b.text));
- const contentBottom=next?.y??1;
- const mixedTitle=titleReading(mixedWords.filter(b=>b.y+b.h/2<contentBottom));
- if(titleIsReadable(pdfTitle)&&mixedTitle.toLocaleLowerCase()===pdfTitle.toLocaleLowerCase())return {value:pdfTitle,source:'ข้อความ PDF และ OCR ตรงกัน'};
- const label=mixedWords.find(b=>/^(?:DRAWING\s*TITLE|SHEET\s*TITLE)\b/i.test(b.text));
+ const lines=groupLines(mixedWords);
+ const label=lines.find(b=>/^(?:(?:DRAWING|SHEET)\s*(?:TITLE|NAME)\b|ชื่อแบบ)/i.test(b.text));
  const cutoff=Math.max(labelBottom,label?.y+label?.h||0);
- const thaiWords=await reader.ocr(image,signal,'thai',true);
- const thaiTitle=titleReading(thaiWords.filter(b=>/[ก-๙]/.test(b.text)&&b.y+b.h/2>cutoff&&b.y+b.h/2<contentBottom));
- const englishWords=await reader.ocr(image,signal,'english',true);
- const hybridTitle=combineTitleWords(thaiWords,mixedWords,englishWords,cutoff,contentBottom);
- return chooseTitleReading(pdfTitle,thaiTitle,mixedTitle,hybridTitle);
+ const next=lines.find(b=>b.y>=cutoff&&/^(?:DRAWING\s*(?:NO|NUMBER)|DWG\s*NO|REVISION|SCALE|หมายเลขแบบ|เลขที่แบบ|มาตราส่วน)/i.test(b.text));
+ const contentBottom=next?.y??1;
+ const inContent=b=>b.y+b.h/2>cutoff&&b.y+b.h/2<contentBottom;
+ const mixedContent=mixedWords.filter(inContent),mixedTitle=titleReading(mixedContent);
+ const mixedPass={value:mixedTitle,source:'OCR ไทย + อังกฤษ',words:mixedContent};
+ if(titleIsReadable(pdfTitle)&&sameReading(mixedTitle,pdfTitle)){
+  const source='ข้อความ PDF และ OCR ตรงกัน';
+  return {value:pdfTitle,source,review:assessTitle(pdfTitle,source,mixedContent,[mixedPass],pdfTitle)};
+ }
+ const thaiWords=(await reader.ocr(image,signal,'thai',true)).filter(inContent);
+ const thaiTitle=titleReading(thaiWords.filter(b=>/[ก-๙]/.test(b.text)));
+ const englishWords=(await reader.ocr(image,signal,'english',true)).filter(inContent);
+ const hybridWords=combinedTitleWords(thaiWords,mixedContent,englishWords),hybridTitle=titleReading(hybridWords);
+ const picked=chooseTitleReading(pdfTitle,thaiTitle,mixedTitle,hybridTitle);
+ const selectedWords=sameReading(picked.value,hybridTitle)?hybridWords:sameReading(picked.value,thaiTitle)?thaiWords:mixedContent;
+ const passes=[mixedPass,{value:thaiTitle,source:'OCR ไทย',words:thaiWords},{value:titleReading(englishWords),source:'OCR อังกฤษ',words:englishWords}];
+ return {...picked,review:assessTitle(picked.value,picked.source,selectedWords,passes,pdfTitle)};
 }
 export async function regionImage(item,r,signal,max=1800){
  check(signal);
@@ -143,14 +159,11 @@ export async function readRegions(item,template,reader,signal){
    result.previews[field]=image.toDataURL();
    if(field==="title"){
     const pdfTitle=titleReading(selected);
-    if(!titleNeedsImageCheck(pdfTitle)){
-     result.fields.title=pdfTitle;result.quality.title='ข้อความ PDF · ตรวจเทียบภาพ';
-    }else{
-     const label=selected.find(b=>/^(?:(?:DRAWING|SHEET)\s*TITLE)\b|^ชื่อแบบ/i.test(b.text));
-     const labelBottom=label?(label.y+label.h-r.y)/r.h:0;
-     const picked=await readTitleImage(image,reader,signal,pdfTitle,labelBottom);
-     result.fields.title=picked.value;result.quality.title=picked.source+' · ตรวจเทียบภาพก่อนยืนยัน';
-    }
+    const label=selected.find(b=>/^(?:(?:DRAWING|SHEET)\s*TITLE)\b|^ชื่อแบบ/i.test(b.text));
+    const labelBottom=label?(label.y+label.h-r.y)/r.h:0;
+    const picked=await readTitleImage(image,reader,signal,pdfTitle,labelBottom);
+    result.fields.title=picked.value;result.quality.title=picked.source+' · ตรวจเทียบภาพก่อนยืนยัน';
+    result.review={...result.review,title:picked.review};
     continue;
    }
    if(field!=="number"&&(!selected.length||selected.some(b=>/[\uFFFD\u0000-\u0008]/.test(b.text)))){
@@ -194,7 +207,7 @@ export async function readRegions(item,template,reader,signal){
   }
  }
  if(!result.fields.revision&&!template.regions.revisionTable){result.fields.revision="0";result.quality.revision="ไม่พบครั้งที่แก้ไข · ใช้ค่าเริ่มต้น 0 ตรวจยืนยัน";}
- result.previewUrl=result.previews.number||Object.values(result.previews)[0];result.elapsedMs=Math.round(performance.now()-started);return result;
+ result.previewUrl=result.previews.number||Object.values(result.previews)[0];result.elapsedMs=Math.round(performance.now()-started);return completeReview(result);
 }
 
 

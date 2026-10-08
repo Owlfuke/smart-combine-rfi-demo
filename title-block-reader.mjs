@@ -1,5 +1,6 @@
 import {locateTitleBlock,pdfBoxes,groupLines} from "./title-block-parser.mjs";
-import {regionImage,readTitleImage,titleNeedsImageCheck} from "./regions.mjs";
+import {regionImage,readTitleImage,titleReading,inRegion} from "./regions.mjs";
+import {completeReview} from './ocr-review.mjs';
 const aborted=()=>new DOMException("ยกเลิกการอ่าน Title Block","AbortError");
 function ensure(signal){if(signal.aborted)throw aborted();}
 function crop(canvas,region,max=1500){
@@ -86,31 +87,34 @@ export class TitleBlockReader{
    ensure(signal);
    best ||= locateTitleBlock([]);
 
-   if(!this.closed&&method!=="PDF text"){
+   if(!this.closed){
      const regions=drawingNumberRegions(numberEvidence),readings=[];
-     for(const region of regions){ensure(signal);this.progress("ตรวจเลขแบบเฉพาะช่อง Drawing No.");const image=crop(canvas,region,1800);try{readings.push(...numberCandidates(await this.ocr(image,signal,true)));}finally{image.width=image.height=0;}}
+     for(const region of regions){ensure(signal);this.progress("ตรวจเลขแบบเฉพาะช่อง Drawing No.");const image=await regionImage(item,region,signal);try{readings.push(...numberCandidates(await this.ocr(image,signal,true)));best.previews={...best.previews,number:image.toDataURL()};}finally{image.width=image.height=0;}}
      const candidates=[...new Set(readings)];
      if(candidates.length===1&&!best.fields.number){best.fields.number=candidates[0];best.quality.number="อ่านเฉพาะช่อง Drawing No. · ตรวจยืนยัน";}
+     else if(candidates.length===1&&candidates[0]===best.fields.number&&method==='PDF text'){best.quality.number='PDF และ OCR ตรงกัน · ตรวจยืนยัน';}
      else if(candidates.length&&(!candidates.includes(best.fields.number)||candidates.length>1)){best.numberCandidates=[...new Set([best.fields.number,...candidates].filter(Boolean))];best.fields.number="";best.quality.number="ผลอ่านขัดกัน · เลือกตรวจเลขแบบเอง";}
    }
-   if(item.doc.type==="pdf"&&titleNeedsImageCheck(best.fields.title)){
-     const lines=groupLines(textBoxes),label=lines.find(b=>/^(?:(?:DRAWING|SHEET)\s*(?:TITLE|NAME)|ชื่อแบบ)/i.test(b.text));
+   if(!this.closed){
+     const lines=groupLines(item.doc.type==='pdf'&&textBoxes.length?textBoxes:numberEvidence),label=lines.find(b=>/^(?:(?:DRAWING|SHEET)\s*(?:TITLE|NAME)|ชื่อแบบ)/i.test(b.text));
      if(label){
-       this.progress("ตรวจชื่อแบบจากภาพภาษาไทย");
+       this.progress("ตรวจชื่อแบบจากภาพ · ไทย อังกฤษ และตัวเลข");
        const x=Math.max(0,label.x-.01),y=Math.max(0,label.y-.01);
        const next=lines.filter(b=>b.y>label.y+label.h&&/^(?:DRAWING\s*(?:NO|NUMBER)|DWG\s*NO|REVISION|SCALE|หมายเลขแบบ|เลขที่แบบ|มาตราส่วน)/i.test(b.text)).sort((a,b)=>a.y-b.y)[0];
        const bottom=Math.min(1,next?next.y+Math.max(.035,next.h):label.y+Math.max(.22,label.h*10));
        const region={x,y,w:Math.min(1-x,Math.max(.35,label.w*2.5)),h:Math.max(.05,bottom-y)};
        const image=await regionImage(item,region,signal);
        try{
-         const picked=await readTitleImage(image,this,signal,best.fields.title,(label.y+label.h-region.y)/region.h);
+         const pdfTitle=item.doc.type==='pdf'?titleReading(textBoxes.filter(b=>inRegion(b,region)&&b.y>label.y+label.h*.6&&(!next||b.y<next.y))):'';
+         const picked=await readTitleImage(image,this,signal,pdfTitle,(label.y+label.h-region.y)/region.h);
          best.fields.title=picked.value;best.quality.title=picked.source+" · ตรวจเทียบภาพก่อนยืนยัน";
+         best.review={...best.review,title:picked.review};best.previews={...best.previews,title:image.toDataURL()};
        }finally{image.width=image.height=0;}
      }
    }
    const preview=crop(canvas,best.region,900),previewUrl=preview.toDataURL("image/png");preview.width=preview.height=0;
    if(best.fields.number&&best.fields.title)this.layout={x:Math.max(0,best.region.x-.03),y:Math.max(0,best.region.y-.25),w:1-Math.max(0,best.region.x-.03),h:1-Math.max(0,best.region.y-.25)};
-   return {...best,method,previewUrl,elapsedMs:Math.round(performance.now()-started)};
+   return completeReview({...best,method,previewUrl,elapsedMs:Math.round(performance.now()-started)});
  }
  stop(){this.closed=true;if(this.worker){this.worker.terminate().catch(()=>{});this.worker=null;}}
 }

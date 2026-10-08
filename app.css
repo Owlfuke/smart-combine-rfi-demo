@@ -112,3 +112,23 @@ body.canvas-focus.hide-left.hide-right .workspace{grid-template-columns:minmax(0
 .grid-editor{width:min(1100px,95vw);max-height:95vh;overflow:auto}.grid-editor canvas{display:block;max-width:100%;margin:12px auto;cursor:crosshair}.grid-editor button{margin:4px}.grid-editor .message{color:#7dd3fc}
 
 #rfi-preview{width:100%;height:auto;max-height:none;object-fit:contain;background:white;cursor:zoom-in;border-radius:6px}#rfi-preview[hidden]{display:none}#rfi-grid-warning{font-size:12px;color:#fbbf24}.rfi-image-dialog{width:min(1050px,95vw);max-height:94vh;overflow:auto}.rfi-image-dialog img{display:block;max-width:100%;height:auto;margin:12px auto;background:white}.rfi-image-dialog button{display:block;margin-left:auto}
+:root { --ocr-review-warning: #fbbf24; }
+.ocr-field-review { display:grid;gap:5px;border-left:3px solid var(--ocr-review-warning);padding:8px 10px;margin:-5px 0 12px;background:#1c2534;overflow-wrap:anywhere; }
+.ocr-field-review[data-status="matched"] { border-color:#4ade80; }
+.ocr-field-review[data-status="missing"] { border-color:#fb7185; }
+.ocr-field-review small { display:block;color:#cbd5e1;font-size:12px; }
+.ocr-field-badge { font-size:12px;color:var(--ocr-review-warning); }
+.ocr-field-review[data-status="matched"] .ocr-field-badge { color:#4ade80; }
+.ocr-field-review[data-status="missing"] .ocr-field-badge { color:#fda4af; }
+.ocr-uncertain-words { margin:3px 0;font-size:13px; }
+.ocr-uncertain-words mark { background:#fbbf24;color:#172033;border-radius:3px;padding:1px 4px; }
+.ocr-field-review details { font-size:12px; }
+.ocr-field-review summary { cursor:pointer; }
+.ocr-field-review details p { margin:6px 0; }
+.ocr-queue-review { color:#fbbf24;display:block;text-align:left;overflow-wrap:anywhere; }
+.ocr-image-zoom { margin-top:6px; }
+.ocr-image-dialog { width:min(1100px,94vw);max-height:92vh;overflow:auto; }
+.ocr-image-stage { position:relative;line-height:0; }
+.ocr-image-stage img { display:block;width:100%;height:auto; }
+.ocr-word-box { position:absolute;border:2px solid #f59e0b;background:#f59e0b26;box-sizing:border-box; }
+.retry-title-ocr { margin:10px 0; }
