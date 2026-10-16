@@ -1,8 +1,12 @@
 import {locateTitleBlock,pdfBoxes,groupLines} from "./title-block-parser.mjs";
-import {regionImage,readTitleImage,titleReading,inRegion} from "./regions.mjs";
+import {regionImage,readTitleImage,titleReading,titleIsReadable,inRegion,drawingCodes} from "./regions.mjs";
 import {completeReview} from './ocr-review.mjs';
 const aborted=()=>new DOMException("ยกเลิกการอ่าน Title Block","AbortError");
 function ensure(signal){if(signal.aborted)throw aborted();}
+function evidenceRegion(boxes,pad=.004){
+ const x=Math.max(0,Math.min(...boxes.map(box=>box.x))-pad),y=Math.max(0,Math.min(...boxes.map(box=>box.y))-pad);
+ return {x,y,w:Math.min(1,Math.max(...boxes.map(box=>box.x+box.w))+pad)-x,h:Math.min(1,Math.max(...boxes.map(box=>box.y+box.h))+pad)-y};
+}
 function crop(canvas,region,max=1500){
  const x=Math.max(0,region.x*canvas.width),y=Math.max(0,region.y*canvas.height),w=Math.min(canvas.width-x,region.w*canvas.width),h=Math.min(canvas.height-y,region.h*canvas.height);
  const c=document.createElement("canvas"),scale=Math.min(2,max/Math.max(w,h));c.width=Math.max(1,Math.round(w*scale));c.height=Math.max(1,Math.round(h*scale));
@@ -40,11 +44,12 @@ export class TitleBlockReader{
    })();
    return this.pending;
  }
- async ocr(canvas,signal,numberOnly=false,raw=false){
+ async ocr(canvas,signal,numberOnly=false,raw=false,options={}){
    const operation=(async()=>{
      const worker=await this.getWorker(signal);ensure(signal);
-     const language=numberOnly==="thai"?"tha":numberOnly==="english"?"eng":"eng+tha";if((this.language||"eng+tha")!==language){await worker.reinitialize(language);this.language=language;}if(numberOnly==="thai"||numberOnly==="english")numberOnly=false;
-     await worker.setParameters({tessedit_pageseg_mode:numberOnly&&!raw?"6":"11",tessedit_char_whitelist:numberOnly?"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./ ":""});ensure(signal);
+     const language=numberOnly==="thai"?"tha":numberOnly==="english"||numberOnly===true?"eng":"eng+tha";if((this.language||"eng+tha")!==language){await worker.reinitialize(language);this.language=language;}if(numberOnly==="thai"||numberOnly==="english")numberOnly=false;
+     const psm=[6,7,11,13].includes(options.psm)?String(options.psm):numberOnly&&!raw?"6":"11";
+     await worker.setParameters({tessedit_pageseg_mode:psm,tessedit_char_whitelist:numberOnly?"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./ ":""});ensure(signal);
      const prepared=raw?crop(canvas,{x:0,y:0,w:1,h:1},2400):removeTableRules(canvas);const ocrWidth=prepared.width,ocrHeight=prepared.height;let data;try{({data}=await worker.recognize(prepared,{}, {text:true,blocks:true}));}finally{prepared.width=prepared.height=0;}ensure(signal);
      const words=[];
      for(const block of data.blocks||[])for(const paragraph of block.paragraphs||[])for(const line of paragraph.lines||[])for(const word of line.words||[]){
@@ -88,30 +93,42 @@ export class TitleBlockReader{
    best ||= locateTitleBlock([]);
 
    if(!this.closed){
-     const regions=drawingNumberRegions(numberEvidence),readings=[];
-     for(const region of regions){ensure(signal);this.progress("ตรวจเลขแบบเฉพาะช่อง Drawing No.");const image=await regionImage(item,region,signal);try{readings.push(...numberCandidates(await this.ocr(image,signal,true)));best.previews={...best.previews,number:image.toDataURL()};}finally{image.width=image.height=0;}}
+     const regions=best.fieldEvidence?.number?.length?[evidenceRegion(best.fieldEvidence.number)]:drawingNumberRegions(numberEvidence),readings=[];
+     for(const region of regions){ensure(signal);this.progress("ตรวจเลขแบบเฉพาะช่อง Drawing No.");const image=await regionImage(item,region,signal);try{readings.push(...numberCandidates(await this.ocr(image,signal,true,true,{psm:6})));best.previews={...best.previews,number:image.toDataURL()};}finally{image.width=image.height=0;}}
      const candidates=[...new Set(readings)];
      if(candidates.length===1&&!best.fields.number){best.fields.number=candidates[0];best.quality.number="อ่านเฉพาะช่อง Drawing No. · ตรวจยืนยัน";}
      else if(candidates.length===1&&candidates[0]===best.fields.number&&method==='PDF text'){best.quality.number='PDF และ OCR ตรงกัน · ตรวจยืนยัน';}
-     else if(candidates.length&&(!candidates.includes(best.fields.number)||candidates.length>1)){best.numberCandidates=[...new Set([best.fields.number,...candidates].filter(Boolean))];best.fields.number="";best.quality.number="ผลอ่านขัดกัน · เลือกตรวจเลขแบบเอง";}
+     else if(candidates.length&&(!candidates.includes(best.fields.number)||candidates.length>1)){best.numberCandidates=[...new Set([best.fields.number,...candidates].filter(Boolean))];if(!drawingCodes([{text:best.fields.number,x:0,y:0,w:1,h:.1}]).length)best.fields.number="";best.quality.number="ข้อความ PDF และ OCR ขัดกัน · ตรวจเลขแบบก่อนยืนยัน";best.review={...best.review,number:{value:best.fields.number,source:method==='PDF text'?'ข้อความ PDF ต้นฉบับ':'ผลอ่านในช่องเลขแบบ',status:'check',issues:['เลขแบบจากแต่ละแหล่งไม่ตรงกัน · ตรวจเทียบภาพ'],flagged:[],candidates:best.numberCandidates.map(value=>({value,source:value===best.fields.number?'ค่าที่เลือก':'OCR ภาพ'}))}};}
    }
    if(!this.closed){
      const lines=groupLines(item.doc.type==='pdf'&&textBoxes.length?textBoxes:numberEvidence),label=lines.find(b=>/^(?:(?:DRAWING|SHEET)\s*(?:TITLE|NAME)|ชื่อแบบ)/i.test(b.text));
      if(label){
        this.progress("ตรวจชื่อแบบจากภาพ · ไทย อังกฤษ และตัวเลข");
        const x=Math.max(0,label.x-.01),y=Math.max(0,label.y-.01);
-       const next=lines.filter(b=>b.y>label.y+label.h&&/^(?:DRAWING\s*(?:NO|NUMBER)|DWG\s*NO|REVISION|SCALE|หมายเลขแบบ|เลขที่แบบ|มาตราส่วน)/i.test(b.text)).sort((a,b)=>a.y-b.y)[0];
+       const next=lines.filter(b=>b.x>=label.x-.015&&b.y>label.y+label.h&&/^(?:DRAWING\s*(?:NO|NUMBER)|DWG\s*NO|REVISION|SCALE|DATE\s*[:：]|หมายเลขแบบ|เลขที่แบบ|มาตราส่วน)/i.test(b.text)).sort((a,b)=>a.y-b.y)[0];
        const bottom=Math.min(1,next?next.y+Math.max(.035,next.h):label.y+Math.max(.22,label.h*10));
        const region={x,y,w:Math.min(1-x,Math.max(.35,label.w*2.5)),h:Math.max(.05,bottom-y)};
-       const image=await regionImage(item,region,signal);
+       const titleBoxes=best.fieldEvidence?.title;
+       const reliablePdf=item.doc.type==='pdf'&&titleIsReadable(best.fields.title)&&!/[ก-๙]|\.{3,}/.test(best.fields.title);
+       const titleRegion=reliablePdf&&titleBoxes?.length?evidenceRegion(titleBoxes):region;
+       const image=await regionImage(item,titleRegion,signal);
        try{
-         const pdfTitle=item.doc.type==='pdf'?titleReading(textBoxes.filter(b=>inRegion(b,region)&&b.y>label.y+label.h*.6&&(!next||b.y<next.y))):'';
-         const picked=await readTitleImage(image,this,signal,pdfTitle,(label.y+label.h-region.y)/region.h);
+         const pdfTitle=item.doc.type==='pdf'?(reliablePdf&&titleBoxes?.length?best.fields.title:titleReading(textBoxes.filter(b=>inRegion(b,titleRegion)&&b.y>label.y+label.h*.6&&(!next||b.y<next.y)))):'';
+         const valueBoxes=(titleBoxes||[]).filter(box=>!/^\s*(?:DRAWING|SHEET)\s*(?:TITLE|NAME)\b|^ชื่อแบบ/i.test(box.text));
+         const pdfWords=valueBoxes.map(box=>({...box,x:(box.x-titleRegion.x)/titleRegion.w,y:(box.y-titleRegion.y)/titleRegion.h,w:box.w/titleRegion.w,h:box.h/titleRegion.h}));
+         const picked=await readTitleImage(image,this,signal,pdfTitle,(label.y+label.h-titleRegion.y)/titleRegion.h,pdfWords);
          best.fields.title=picked.value;best.quality.title=picked.source+" · ตรวจเทียบภาพก่อนยืนยัน";
          best.review={...best.review,title:picked.review};best.previews={...best.previews,title:image.toDataURL()};
        }finally{image.width=image.height=0;}
      }
    }
+   if(best.fieldEvidence?.revisionTable?.length){
+    const tableRegion=evidenceRegion(best.fieldEvidence.revisionTable),image=await regionImage(item,tableRegion,signal);
+    try{const ctx=image.getContext('2d'),row=best.revisionHistory?.[0]?.evidence;if(row?.length){const bounds=evidenceRegion(row,.001);ctx.strokeStyle='#22c55e';ctx.lineWidth=3;ctx.strokeRect((bounds.x-tableRegion.x)/tableRegion.w*image.width,(bounds.y-tableRegion.y)/tableRegion.h*image.height,bounds.w/tableRegion.w*image.width,bounds.h/tableRegion.h*image.height);}const preview=image.toDataURL();best.previews={...best.previews,revision:preview,revisionDate:preview};}finally{image.width=image.height=0;}
+   }
+   const suffix=best.fields.number?.match(/-R(\d+)$/i);
+   const revisionNumber=best.fields.revision?.match(/^(?:R(?:EV)?\.?\s*)?(\d+)$/i)?.[1];
+   if(suffix&&best.fields.revision&&Number(suffix[1])!==Number(revisionNumber))best.review={...best.review,revision:{value:best.fields.revision,source:'ตาราง Revision',status:'check',issues:['Revision ในตารางไม่ตรงกับท้ายเลขแบบ · ตรวจภาพก่อนยืนยัน'],flagged:[],candidates:[{value:best.fields.revision,source:'ตาราง Revision'},{value:suffix[1],source:'ท้ายเลขแบบ'}]}};
    const preview=crop(canvas,best.region,900),previewUrl=preview.toDataURL("image/png");preview.width=preview.height=0;
    if(best.fields.number&&best.fields.title)this.layout={x:Math.max(0,best.region.x-.03),y:Math.max(0,best.region.y-.25),w:1-Math.max(0,best.region.x-.03),h:1-Math.max(0,best.region.y-.25)};
    return completeReview({...best,method,previewUrl,elapsedMs:Math.round(performance.now()-started)});
@@ -121,13 +138,13 @@ export class TitleBlockReader{
 
 export function mergeReadings(previous,next){
  if(!previous)return next;
- const merged={...previous,fields:{...previous.fields},quality:{...previous.quality}};
+ const merged={...previous,fields:{...previous.fields},quality:{...previous.quality},fieldEvidence:{...previous.fieldEvidence}};
  let added=false;
  for(const key of ["number","title","revision","revisionDate"]){
-   if(!merged.fields[key]&&next.fields[key]){merged.fields[key]=next.fields[key];merged.quality[key]=next.quality?.[key];added=true;}
+   if(!merged.fields[key]&&next.fields[key]){merged.fields[key]=next.fields[key];merged.quality[key]=next.quality?.[key];merged.fieldEvidence[key]=next.fieldEvidence?.[key];added=true;}
  }
  if(next.revisionHistory?.length&&!previous.revisionHistory?.length){
-   merged.revisionHistory=next.revisionHistory;merged.fields.revision=next.fields.revision;merged.fields.revisionDate=next.fields.revisionDate;added=true;
+   merged.revisionHistory=next.revisionHistory;merged.fields.revision=next.fields.revision;merged.fields.revisionDate=next.fields.revisionDate;merged.fieldEvidence.revisionTable=next.fieldEvidence?.revisionTable;added=true;
  }
  if(added&&next.region&&previous.region){
    const a=previous.region,b=next.region,x=Math.min(a.x,b.x),y=Math.min(a.y,b.y);
@@ -139,11 +156,11 @@ export function mergeReadings(previous,next){
 
 export function drawingNumberRegions(boxes){
  const lines=groupLines(boxes);
- return lines.filter(b=>/^(?:DRA(?:WING|IWNG)|DRWAING|DWG|DRG|SHEET)\.?\s*(?:NO\.?|NUMBER|#)|^(?:เลขที่แบบ|หมายเลขแบบ|รหัสแบบ)/i.test(b.text)).slice(0,2).map(b=>{
-  const x=Math.max(0,b.x-.01),y=Math.max(0,b.y+b.h*.85),w=Math.min(1-x,Math.max(b.w*2,.18)),h=Math.min(1-y,Math.max(b.h*4,.055));
+ return lines.filter(b=>!/\.{3,}/.test(b.text)&&/^(?:DRA(?:WING|IWNG)|DRWAING|DWG|DRG|SHEET)\.?\s*(?:NO\.?|NUMBER|#)|^(?:เลขที่แบบ|หมายเลขแบบ|รหัสแบบ)/i.test(b.text)).slice(0,2).map(b=>{
+  const x=Math.max(0,b.x-.01),y=Math.max(0,b.y-b.h*.6),w=Math.min(1-x,Math.max(b.w*5,.20)),h=Math.min(1-y,Math.max(b.h*5,.055));
   return {x,y,w,h};
  });
 }
 export function numberCandidates(boxes){
- return [...new Set(groupLines(boxes).map(b=>b.text.toUpperCase().replace(/[–—−]/g,"-").replace(/\s*-\s*/g,"-").replace(/-{2,}/g,"-").trim()).filter(s=>/^[A-Z]{1,6}(?:[-./][A-Z0-9]{1,12}){1,4}$/.test(s)&&/\d/.test(s)))];
+ return drawingCodes(boxes);
 }

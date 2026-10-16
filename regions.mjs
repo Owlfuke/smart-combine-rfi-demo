@@ -10,10 +10,15 @@ export function searchRegion(r,column=false){
  return {x,y,w:Math.min(1,r.x+r.w+dx)-x,h:Math.min(1,r.y+r.h+dy)-y};
 }
 export function drawingCodes(boxes){
- return [...new Set(groupLines(boxes).flatMap(b=>b.text.toUpperCase().replace(/[–—−]/g,'-').replace(/\s*-\s*/g,'-').match(/[A-Z]{1,8}(?:-[A-Z0-9]{1,12}){1,5}/g)||[]).filter(v=>/\d/.test(v)))];
+ return [...new Set(groupLines(boxes).flatMap(b=>b.text.toUpperCase().replace(/[–—−]/g,'-').replace(/\s*-\s*/g,'-').match(/(?:\d{1,3}-)?[A-Z]{1,8}(?:[-./][A-Z0-9]{1,12}){1,5}/g)||[]).filter(v=>/\d/.test(v)))];
 }
 export function titleReading(boxes){
- const lines=groupLines(boxes).map(b=>b.text.replace(/^(?:DRAWING\s*TITLE|SHEET\s*TITLE|ชื่อแบบ)\s*[:：-]?\s*/i,'').trim()).filter(Boolean);
+ const label=/^(?:(?:DRAWING|SHEET)\s*(?:TITLE|NAME)|ชื่อแบบ)\s*[:：-]?\s*/i;
+ const grouped=groupLines(boxes),start=Math.max(0,grouped.findIndex(box=>label.test(box.text))),lines=[];
+ for(const box of grouped.slice(start)){
+  if(/^(?:DRAWING\s*(?:NO|NUMBER)|DWG\s*NO|REVISION|SCALE|DATE\s*[:：]|หมายเลขแบบ|เลขที่แบบ|มาตราส่วน)/i.test(box.text))break;
+  const value=box.text.replace(label,'').trim();if(value&&!/\.{3,}/.test(value))lines.push(value);
+ }
  return cleanField('title',lines.join(' ')).value;
 }
 export function titleIsReadable(value){
@@ -38,6 +43,9 @@ export function chooseTitleReading(pdfTitle,thaiTitle,mixedTitle,hybridTitle='')
  const thai=thaiTitle?.trim()||'';
  const mixed=mixedTitle?.trim()||'';
  if(titleIsReadable(mixed)&&mixed.toLocaleLowerCase()===pdfTitle?.toLocaleLowerCase())return {value:pdfTitle,source:'ข้อความ PDF และ OCR ตรงกัน'};
+ // Native English PDF text preserves exact letters and numbers. OCR disagreement
+ // is a review signal, not permission to replace PART with PLAN or 1ST with 2ST.
+ if(titleIsReadable(pdfTitle)&&!/[ก-๙]|\.{3,}/.test(pdfTitle))return {value:pdfTitle,source:'ข้อความ PDF ต้นฉบับ · ตรวจผล OCR ที่ต่างกัน'};
  if(titleIsReadable(hybridTitle))return {value:hybridTitle,source:'OCR ไทย/อังกฤษ/ตัวเลข'};
  if(titleIsReadable(mixed)&&/[ก-๙]/.test(mixed)&&/(?:[A-Za-z]{4,}|\+?\d+\.\d+)/.test(mixed))return {value:mixed,source:'OCR ไทยและอังกฤษ · ตรวจคำผสม'};
  if(titleIsReadable(thai)&&(thai.match(/[ก-๙]/g)||[]).length>=4)return {value:thai,source:'OCR ภาษาไทย'};
@@ -62,7 +70,16 @@ export function combinedTitleWords(thaiWords,mixedWords,englishWords,labelBottom
 export function combineTitleWords(thaiWords,mixedWords,englishWords,labelBottom=0,contentBottom=1){
  return titleReading(combinedTitleWords(thaiWords,mixedWords,englishWords,labelBottom,contentBottom));
 }
-export async function readTitleImage(image,reader,signal,pdfTitle,labelBottom=0){
+export async function readTitleImage(image,reader,signal,pdfTitle,labelBottom=0,pdfWords=[]){
+ if(titleIsReadable(pdfTitle)&&!/[ก-๙]|\.{3,}/.test(pdfTitle)){
+  const words=await reader.ocr(image,signal,'english',true,{psm:6});
+  const lines=groupLines(words),label=lines.find(b=>/^(?:DRAWING|SHEET)\s*(?:TITLE|NAME)/i.test(b.text));
+  const inline=label?.text.replace(/^(?:DRAWING|SHEET)\s*(?:TITLE|NAME)\s*[:：]?\s*/i,'').trim();
+  const cutoff=inline?label.y:Math.max(labelBottom,label?label.y+label.h:0);
+  const content=words.filter(word=>word.y+word.h/2>cutoff);
+  const value=titleReading(content),source=sameReading(pdfTitle,value)?'ข้อความ PDF และ OCR อังกฤษตรงกัน':'ข้อความ PDF ต้นฉบับ · ตรวจผล OCR ที่ต่างกัน';
+  return {value:pdfTitle,source,review:assessTitle(pdfTitle,source,pdfWords.length?pdfWords:content,[{source:'OCR อังกฤษ',value,words:content}],pdfTitle)};
+ }
  const mixedWords=await reader.ocr(image,signal,false,true);
  const lines=groupLines(mixedWords);
  const label=lines.find(b=>/^(?:(?:DRAWING|SHEET)\s*(?:TITLE|NAME)\b|ชื่อแบบ)/i.test(b.text));
@@ -80,8 +97,10 @@ export async function readTitleImage(image,reader,signal,pdfTitle,labelBottom=0)
  const thaiTitle=titleReading(thaiWords.filter(b=>/[ก-๙]/.test(b.text)));
  const englishWords=(await reader.ocr(image,signal,'english',true)).filter(inContent);
  const hybridWords=combinedTitleWords(thaiWords,mixedContent,englishWords),hybridTitle=titleReading(hybridWords);
- const picked=chooseTitleReading(pdfTitle,thaiTitle,mixedTitle,hybridTitle);
- const selectedWords=sameReading(picked.value,hybridTitle)?hybridWords:sameReading(picked.value,thaiTitle)?thaiWords:mixedContent;
+ const englishTitle=titleReading(englishWords);
+ const strongEnglish=englishWords.length&&englishWords.reduce((sum,word)=>sum+(word.confidence||0),0)/englishWords.length>=75;
+ const picked=strongEnglish&&titleIsReadable(englishTitle)&&!/[ก-๙]/.test(mixedTitle)?{value:englishTitle,source:'OCR อังกฤษ'}:chooseTitleReading(pdfTitle,thaiTitle,mixedTitle,hybridTitle);
+ const selectedWords=sameReading(picked.value,englishTitle)?englishWords:sameReading(picked.value,hybridTitle)?hybridWords:sameReading(picked.value,thaiTitle)?thaiWords:mixedContent;
  const passes=[mixedPass,{value:thaiTitle,source:'OCR ไทย',words:thaiWords},{value:titleReading(englishWords),source:'OCR อังกฤษ',words:englishWords}];
  return {...picked,review:assessTitle(picked.value,picked.source,selectedWords,passes,pdfTitle)};
 }
@@ -118,21 +137,28 @@ export async function readRegions(item,template,reader,signal){
   try{
    if(field==="revisionTable"){
     let table=readRevisionGrid(selected.map(b=>({...b,x:(b.x-r.x)/r.w,y:(b.y-r.y)/r.h,w:b.w/r.w,h:b.h/r.h})),template.revisionSplit);
+    const pdfTable=table;
     const readings=[];const candidates=table?[table]:[];
+    const split=template.revisionSplit||.18;
+    if(pdfTable){
+     const words=await reader.ocr(image,signal,/[ก-๙]/.test(pdfTable.revisionDate)?false:'english',true,{psm:6});readings.push(words);
+     const found=readRevisionGrid(words,template.revisionSplit);if(found)candidates.push(found);
+    }else{
     for(const raw of [false,true]){const words=await reader.ocr(image,signal,false,raw);readings.push(words);const found=readRevisionGrid(words,template.revisionSplit);if(found)candidates.push(found);}
     const thaiWords=await reader.ocr(image,signal,"thai",false);readings.push(thaiWords);const thaiTable=readRevisionGrid(thaiWords,template.revisionSplit);if(thaiTable)candidates.push(thaiTable);
     const reduced=document.createElement('canvas');reduced.width=Math.round(image.width*.6);reduced.height=Math.round(image.height*.6);reduced.getContext('2d').drawImage(image,0,0,reduced.width,reduced.height);
     try{for(const language of [false,'thai']){const words=await reader.ocr(reduced,signal,language,false);readings.push(words);const found=readRevisionGrid(words,template.revisionSplit);if(found)candidates.push(found);}}finally{reduced.width=reduced.height=0;}
-    const split=template.revisionSplit||.18;
     for(const [left,right] of [[readings[0],readings[1]],[readings[1],readings[0]],[readings[0],thaiWords],[readings[1],thaiWords]]){const found=readRevisionGrid([...left.filter(b=>b.x+b.w/2<split),...right.filter(b=>b.x+b.w/2>=split)],split);if(found)candidates.push(found);}
+    }
 
-    candidates.sort((a,b)=>b.rank-a.rank);table=candidates[0]||null;
-    if(table&&candidates.some(c=>c.rank===table.rank&&c.revision!==table.revision))table=null;
+    candidates.sort((a,b)=>b.rank-a.rank);table=pdfTable||candidates[0]||null;
+    const readingConflict=table&&candidates.some(candidate=>candidate.revision!==table.revision||candidate.revisionDate!==table.revisionDate);
+    if(!pdfTable&&table&&candidates.some(c=>c.rank===table.rank&&c.revision!==table.revision))table=null;
     const uncertain=table&&readings.some(words=>{
      const rows=[];for(const b of words){let row=rows.find(r=>Math.abs(r.y-b.y)<Math.max(.005,b.h*.7));if(!row){row={y:b.y,words:[]};rows.push(row);}row.words.push(b);}
      return rows.some(row=>{const text=row.words.map(b=>b.text).join(' ');return /\b\d{4}\b/.test(text)&&/\b\d{1,2}\b/.test(text)&&!readRevisionGrid(row.words,split)&&!candidates.some(c=>c.entries.some(e=>Math.abs(e.rowY-row.y)<.04));});
     });
-    if(uncertain)table=null;
+    if(uncertain&&!pdfTable)table=null;
     result.diagnostics={revisionTable:readings,unresolvedRows:!!uncertain};
 
     if(!table&&!template.tableRetry){
@@ -143,17 +169,24 @@ export async function readRegions(item,template,reader,signal){
     if(table){result.fields.revision=table.revision;result.fields.revisionDate=table.revisionDate;result.revisionHistory=table.entries;
      const ctx=image.getContext('2d');ctx.strokeStyle='#22c55e';ctx.lineWidth=3;ctx.strokeRect(1,Math.max(0,table.rowY*image.height-4),image.width-2,table.rowH*image.height+8);
      result.quality.revision=result.quality.revisionDate='วันที่ล่าสุดและ Revision จากแถวเดียวกัน · ตรวจแถวสีเขียว';
+     if(pdfTable&&(readingConflict||uncertain)){
+      result.review={...result.review};
+      for(const key of ['revision','revisionDate'])result.review[key]={value:table[key],source:'ข้อความ PDF ในตาราง Revision',status:'check',issues:['ผล OCR ในตารางอ่านไม่ครบหรือต่างจาก PDF · ตรวจแถวสีเขียว'],flagged:[],candidates:[{value:table[key],source:'ข้อความ PDF'},...[...new Set(candidates.map(candidate=>candidate[key]).filter(value=>value!==table[key]))].map(value=>({value,source:'OCR ภาพ'}))]};
+     }
     }else{result.fields.revision='';result.fields.revisionDate='';result.quality.revision=result.quality.revisionDate='มีแถวที่อ่านหรือจับคู่ไม่สำเร็จ · กรุณาตรวจตารางก่อนยืนยัน';}
     result.previews.revision=result.previews.revisionDate=result.previews.revisionTable=image.toDataURL();continue;
    }
    // Preserve the image used for recognition before drawing the user's original boundary.
    if(field==="number"){
-    let visual=await reader.ocr(image,signal,true),codes=drawingCodes(visual);
+    let visual=await reader.ocr(image,signal,true,true,{psm:6}),codes=drawingCodes(visual);
     const pdfCodes=drawingCodes(selected);
-    if(!codes.length){visual=await reader.ocr(image,signal,true,true);codes=drawingCodes(visual);}
+    if(!codes.length){visual=await reader.ocr(image,signal,true);codes=drawingCodes(visual);}
     if(!codes.length){visual=await reader.ocr(image,signal,false,true);codes=drawingCodes(visual);}
     if(!codes.length&&!pdfCodes.length)result.quality.number='อ่านเลขแบบไม่ชัด · ข้อความดิบ: '+visual.map(b=>b.text).join(' ').slice(0,100);
-    if(codes.length===1){selected=visual;result.quality.number=pdfCodes.length===1&&pdfCodes[0]===codes[0]?"PDF และ OCR ตรงกัน · ตรวจยืนยัน":"อ่านซ้ำจากภาพในกรอบเผื่อ · ตรวจยืนยัน";}
+    if(pdfCodes.length===1){
+     result.quality.number=codes.length===1&&pdfCodes[0]===codes[0]?"PDF และ OCR ตรงกัน · ตรวจยืนยัน":"ข้อความ PDF ต้นฉบับ · ผล OCR ต่างกันหรืออ่านไม่ครบ";
+     if(codes.length!==1||codes[0]!==pdfCodes[0])result.review={...result.review,number:{value:pdfCodes[0],source:'ข้อความ PDF ต้นฉบับ',status:'check',issues:['ผลอ่านเลขแบบจากภาพไม่ตรงหรืออ่านไม่ครบ · ตรวจภาพก่อนยืนยัน'],flagged:[],candidates:[{value:pdfCodes[0],source:'ข้อความ PDF'},...codes.map(value=>({value,source:'OCR ภาพ'}))]}};
+    }else if(codes.length===1){selected=visual;result.quality.number="อ่านซ้ำจากภาพในกรอบเผื่อ · ตรวจยืนยัน";}
     else if(codes.length>1){selected=[];result.quality.number="พบเลขแบบหลายค่า: "+codes.join(" / ")+" · กรุณากรอกยืนยัน";}
    }
    result.previews[field]=image.toDataURL();
@@ -161,7 +194,8 @@ export async function readRegions(item,template,reader,signal){
     const pdfTitle=titleReading(selected);
     const label=selected.find(b=>/^(?:(?:DRAWING|SHEET)\s*TITLE)\b|^ชื่อแบบ/i.test(b.text));
     const labelBottom=label?(label.y+label.h-r.y)/r.h:0;
-    const picked=await readTitleImage(image,reader,signal,pdfTitle,labelBottom);
+    const pdfWords=selected.filter(box=>box.y+box.h/2>r.y+labelBottom*r.h).map(box=>({...box,x:(box.x-r.x)/r.w,y:(box.y-r.y)/r.h,w:box.w/r.w,h:box.h/r.h}));
+    const picked=await readTitleImage(image,reader,signal,pdfTitle,labelBottom,pdfWords);
     result.fields.title=picked.value;result.quality.title=picked.source+' · ตรวจเทียบภาพก่อนยืนยัน';
     result.review={...result.review,title:picked.review};
     continue;

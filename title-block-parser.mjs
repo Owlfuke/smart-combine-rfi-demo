@@ -7,7 +7,7 @@ const patterns={
 const reserved=/^(?:PROJECT|CLIENT|OWNER|SCALE|DATE|DRAWN|CHECKED|APPROVED|DESIGNED|DESCRIPTION|REVISION|(?:DRAWING|DRWAING|DRAIWNG)\s*NO|SHEET\s*NO|โครงการ|เจ้าของ|มาตราส่วน|วันที่|ผู้เขียน|ผู้ตรวจ)/i;
 const clean=s=>s.normalize("NFC").replace(/[–—−]/g,"-").replace(/-{2,}/g,"-").replace(/\s+/g," ").replace(/([ก-๙])\s+(?=[ก-๙])/g,"$1").trim();
 function valid(field,s){
- if(!s||s.length>180||reserved.test(s)||Object.values(patterns).some(re=>re.test(s)))return false;
+ if(!s||s.length>180||/\.{3,}/.test(s)||reserved.test(s)||Object.values(patterns).some(re=>re.test(s)))return false;
  if(field==="number")return !/[ก-๙]{4}/.test(s)&&s.trim().split(/\s+/).length<=3&&s.length<=60&&/\d/.test(s)&&/[A-Zก-๙]/i.test(s)&&/^[A-Z0-9ก-๙._/ -]+$/i.test(s);
  if(field==="revision")return /^[A-Z0-9ก-๙][A-Z0-9ก-๙.-]{0,11}$/i.test(s);
  return s.length>=3&&!/^[\d\s./:-]+$/.test(s);
@@ -38,7 +38,7 @@ export function groupLines(boxes){
  return lines;
 }
 function parseRegion(lines){
- const fields={number:"",title:"",revision:""},quality={},evidence=[];
+ const fields={number:"",title:"",revision:""},quality={},evidence=[],fieldEvidence={};
  for(const field of ["number","title","revision"]){
    const labels=lines.filter(b=>patterns[field].test(b.text));
    let best;
@@ -63,13 +63,14 @@ function parseRegion(lines){
      best.value=clean(best.value+" "+next.text);best.boxes.push(next);last=next;
    }
  }
- if(best){fields[field]=best.value;quality[field]=best.score>=.8?"อ่านจากป้ายกำกับ":"ตรวจเทียบภาพ";evidence.push(...best.boxes);}
+ if(best){fields[field]=best.value;quality[field]=best.score>=.8?"อ่านจากป้ายกำกับ":"ตรวจเทียบภาพ";evidence.push(...best.boxes);fieldEvidence[field]=best.boxes;}
  }
- return {fields,quality,evidence,score:(fields.number?4:0)+(fields.title?4:0)+(fields.revision?1:0)};
+ return {fields,quality,evidence,fieldEvidence,score:(fields.number?4:0)+(fields.title?4:0)+(fields.revision?1:0)};
 }
 export function locateTitleBlock(boxes){
  const lines=groupLines(boxes);
  const regions=[
+  ...lines.filter(b=>patterns.number.test(b.text)&&b.x>=.5&&!/\.{3,}/.test(b.text)).map(b=>({name:'Title Block ตามช่องเลขแบบ',x:Math.max(0,b.x-.015),y:Math.max(0,b.y-.4),w:1-Math.max(0,b.x-.015),h:Math.min(1,b.y+.06)-Math.max(0,b.y-.4),anchored:true})),
   {name:"มุมขวาล่าง",x:.48,y:.48,w:.52,h:.52},
   {name:"แถบขวา",x:.7,y:0,w:.3,h:1},
   {name:"แถบล่าง",x:0,y:.7,w:1,h:.3},
@@ -80,7 +81,7 @@ export function locateTitleBlock(boxes){
  let best={fields:{number:"",title:"",revision:""},quality:{},score:-1,region:regions[0],evidence:[]};
  for(const region of regions){
    const subset=lines.filter(b=>b.x>=region.x-.01&&b.y>=region.y-.01&&b.x<=region.x+region.w&&b.y<=region.y+region.h);
-   const r=parseRegion(subset),score=r.score-(region.name==="ทั้งหน้า"?.5:0);
+   const r=parseRegion(subset),score=r.score-(region.name==="ทั้งหน้า"?.5:0)+(region.anchored&&r.fields.number&&r.fields.title ? .2 : 0);
    if(score>best.score)best={...r,score,region};
  }
  // A missing/garbled label must not hide a clear, unique sheet code at the bottom right.
@@ -92,7 +93,7 @@ export function locateTitleBlock(boxes){
  const table=revisionTable(boxes);
  const hasRevisionGrid=lines.some(b=>/DESCRIPTION|รายละเอียด/i.test(b.text))&&lines.some(b=>/DATE|วันที่/i.test(b.text))&&lines.some(b=>/REVISION|R\s+E\s+V|การแก้ไข|^(?:NO|N0|ม\s*0)\.?/i.test(b.text));
  if(hasRevisionGrid&&!table){best.fields.revision="";best.quality.revision="อ่านแถวตารางไม่ครบ · กรุณากรอกเอง";}
- if(table){best.evidence.push(...table.evidence);best.fields.revision=table.revision;best.fields.revisionDate=table.revisionDate;best.revisionHistory=table.entries;best.quality.revision="ตารางแก้ไข · ตรวจลำดับและวันที่ก่อนยืนยัน";}
+ if(table){best.evidence.push(...table.evidence);best.fields.revision=table.revision;best.fields.revisionDate=table.revisionDate;best.revisionHistory=table.entries;best.quality.revision=best.quality.revisionDate="ตาราง Revision · วันที่ล่าสุดและ Revision จากแถวเดียวกัน";best.fieldEvidence={...best.fieldEvidence,revisionTable:table.evidence};}
  else {best.fields.revisionDate="";const dateLabel=lines.find(b=>/^(?:REV(?:ISION)?\.?\s*DATE|วันที่แก้ไข|วันที่ปรับปรุง)\s*[:：]?/i.test(b.text));if(dateLabel){const candidates=[dateLabel,...lines.filter(b=>b.y>=dateLabel.y&&b.y-dateLabel.y<.06&&Math.abs(b.x-dateLabel.x)<.16)];for(const b of candidates){const date=b.text.match(datePattern);if(date){best.fields.revisionDate=date[0];best.evidence.push(dateLabel,b);break;}}}}
  if(best.evidence.length){
    const left=Math.max(0,Math.min(...best.evidence.map(b=>b.x))-.025);
@@ -133,7 +134,11 @@ export function revisionTable(boxes){
  const lines=groupLines(boxes),anchor=lines.find(b=>/^(?:R\s*E\s*V\s*I\s*S\s*I\s*O\s*N|REVISIONS|ประวัติการแก้ไข|รายการแก้ไข|การแก้ไข)\s*[:：]?$/i.test(b.text));
  const tableAnchor=anchor||lines.find(b=>/^(?:NO|N0|ม\s*0)\.?\s*DATE\s*DESCRIPTION/i.test(b.text))||lines.find(b=>/^(?:NO|N0|ม\s*0)\.?(?:\s*DATE)?$/i.test(b.text)&&lines.some(q=>Math.abs(q.y-b.y)<.02&&/DATE/i.test(q.text))&&lines.some(q=>Math.abs(q.y-b.y)<.02&&/DESCRIPTION/i.test(q.text)));
  if(!tableAnchor)return null;
- const near=lines.filter(b=>Math.abs(b.y-tableAnchor.y)<Math.max(.35,tableAnchor.h*15)&&b.x>=tableAnchor.x-.15&&b.x<tableAnchor.x+Math.max(tableAnchor.w,.65));
+ const header=lines.find(b=>/^(?:REV\.?|NO\.?|N0\.?)\s*(?:DATE)?$/i.test(b.text)&&Math.abs(b.y-tableAnchor.y)<.1&&Math.abs(b.x-tableAnchor.x)<.15&&lines.some(q=>/DESCRIPTION|รายละเอียด/i.test(q.text)&&Math.abs(q.y-b.y)<Math.max(.004,b.h*.65)));
+ const headerRow=header?lines.filter(b=>Math.abs(b.y-header.y)<Math.max(.004,header.h*.65)&&b.x>=header.x-.005&&/^(?:REV\.?|NO\.?|N0\.?|DATE|DESCRIPTION|รายละเอียด)/i.test(b.text)):[];
+ const left=header?header.x-.005:tableAnchor.x-.15;
+ const right=headerRow.length?Math.max(...headerRow.map(b=>b.x+b.w))+.03:tableAnchor.x+Math.max(tableAnchor.w,.65);
+ const near=lines.filter(b=>Math.abs(b.y-tableAnchor.y)<Math.max(.35,tableAnchor.h*15)&&b.x>=left&&b.x<right);
  if(!near.some(b=>/DATE|วันที่/i.test(b.text))||!near.some(b=>/DESCRIPTION|รายละเอียด/i.test(b.text)))return null;
  const rows=[];
  for(const b of near){let row=rows.find(r=>Math.abs(r.y-b.y)<Math.max(.004,b.h*.65));if(!row){row={y:b.y,items:[]};rows.push(row);}row.items.push(b);}
@@ -144,9 +149,9 @@ export function revisionTable(boxes){
    const prefix=text.slice(0,match.index).trim().match(/^(?:REV\.?\s*)?([A-Z]?\d{1,3}|[A-Z])\s*$/i);
    if(!prefix)continue;
    const rank=dateRank(match[0]);if(!rank)continue;
-   entries.push({revision:prefix[1],revisionDate:match[0],rank,description:text.slice(match.index+match[0].length).trim()});
+   entries.push({revision:prefix[1],revisionDate:match[0],rank,description:text.slice(match.index+match[0].length).trim(),evidence:row.items});
  }
  entries.sort((a,b)=>b.rank-a.rank);
  if(entries.length>1&&entries[0].rank===entries[1].rank&&entries[0].revision!==entries[1].revision)return null;
- return entries.length?{...entries[0],entries,evidence:near}:null;
+ return entries.length?{...entries[0],entries,evidence:[tableAnchor,...headerRow,...entries.flatMap(entry=>entry.evidence)]}:null;
 }
